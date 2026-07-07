@@ -1,22 +1,47 @@
 "use client";
 
-import { useState } from "react";
-import type { DayOffLite, UserLite } from "@/lib/types";
+import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import type {
+  DayOffLite,
+  OrgHolidayLite,
+  OrgMemberLite,
+  OrgRoleStr,
+} from "@/lib/types";
 import Avatar from "@/components/Avatar";
 
 const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
 
+const ROLE_LABELS: Record<OrgRoleStr, string> = {
+  ADMIN: "管理者",
+  MEMBER: "参加者",
+  VIEWER: "閲覧者",
+};
+
 export default function SettingsBoard({
   initialNonWorkingWeekdays,
   initialDailyWorkHours,
-  people,
+  initialOrgHolidays,
+  orgMembers: initialOrgMembers,
   initialDaysOff,
+  myUserId,
+  myRole,
+  initialLogoUrl = null,
 }: {
   initialNonWorkingWeekdays: number[];
   initialDailyWorkHours: number;
-  people: UserLite[];
+  initialOrgHolidays: OrgHolidayLite[];
+  orgMembers: OrgMemberLite[];
   initialDaysOff: DayOffLite[];
+  myUserId: string;
+  myRole: OrgRoleStr;
+  initialLogoUrl?: string | null;
 }) {
+  const router = useRouter();
+  const isAdmin = myRole === "ADMIN";
+
+  const [orgMembers, setOrgMembers] =
+    useState<OrgMemberLite[]>(initialOrgMembers);
   const [nonWorking, setNonWorking] = useState<number[]>(
     initialNonWorkingWeekdays
   );
@@ -25,13 +50,51 @@ export default function SettingsBoard({
   const [hoursStatus, setHoursStatus] = useState<"" | "saving" | "saved">("");
   const [capacities, setCapacities] = useState<Record<string, string>>(() =>
     Object.fromEntries(
-      people.map((u) => [u.id, u.dailyCapacity != null ? String(u.dailyCapacity) : ""])
+      initialOrgMembers.map((m) => [
+        m.user.id,
+        m.user.dailyCapacity != null ? String(m.user.dailyCapacity) : "",
+      ])
     )
   );
   const [capStatus, setCapStatus] = useState<Record<string, string>>({});
+  const [logoUrl, setLogoUrl] = useState<string | null>(initialLogoUrl);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const logoFileRef = useRef<HTMLInputElement>(null);
+  const [holidays, setHolidays] =
+    useState<OrgHolidayLite[]>(initialOrgHolidays);
+  const [newHolidayDate, setNewHolidayDate] = useState("");
+  const [newHolidayNote, setNewHolidayNote] = useState("");
+  const [addingHoliday, setAddingHoliday] = useState(false);
   const [daysOff, setDaysOff] = useState<DayOffLite[]>(initialDaysOff);
   const [newDates, setNewDates] = useState<Record<string, string>>({});
   const [adding, setAdding] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<OrgRoleStr>("MEMBER");
+  const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState("");
+
+  function canEditPerson(userId: string) {
+    return isAdmin || (userId === myUserId && myRole !== "VIEWER");
+  }
+
+  async function toggleWeekday(day: number) {
+    if (!isAdmin) return;
+    const next = nonWorking.includes(day)
+      ? nonWorking.filter((d) => d !== day)
+      : [...nonWorking, day].sort();
+    setNonWorking(next);
+    setSavingWeekdays(true);
+    const res = await fetch("/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nonWorkingWeekdays: next }),
+    });
+    setSavingWeekdays(false);
+    if (!res.ok) {
+      setNonWorking(nonWorking);
+      alert("保存に失敗しました");
+    }
+  }
 
   async function saveDailyHours() {
     const h = Number(dailyHours);
@@ -64,22 +127,57 @@ export default function SettingsBoard({
     setCapStatus((p) => ({ ...p, [userId]: res.ok ? "保存済み" : "失敗" }));
   }
 
-  async function toggleWeekday(day: number) {
-    const next = nonWorking.includes(day)
-      ? nonWorking.filter((d) => d !== day)
-      : [...nonWorking, day].sort();
-    setNonWorking(next);
-    setSavingWeekdays(true);
-    const res = await fetch("/api/settings", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nonWorkingWeekdays: next }),
-    });
-    setSavingWeekdays(false);
-    if (!res.ok) {
-      setNonWorking(nonWorking); // 失敗時は戻す
-      alert("保存に失敗しました");
+  async function uploadLogo(file: File) {
+    setLogoUploading(true);
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/orgs/logo", { method: "POST", body: fd });
+    setLogoUploading(false);
+    if (res.ok) {
+      const data = await res.json();
+      setLogoUrl(data.logoUrl);
+      router.refresh();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error ?? "アップロードに失敗しました（Blob未設定の可能性）");
     }
+  }
+
+  async function removeLogo() {
+    setLogoUrl(null);
+    await fetch("/api/orgs/logo", { method: "DELETE" });
+    router.refresh();
+  }
+
+  async function addHoliday() {
+    if (!newHolidayDate || addingHoliday) return;
+    setAddingHoliday(true);
+    const res = await fetch("/api/org-holidays", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        date: newHolidayDate,
+        note: newHolidayNote.trim() || null,
+      }),
+    });
+    setAddingHoliday(false);
+    if (res.ok) {
+      const h = (await res.json()) as OrgHolidayLite;
+      setHolidays((prev) =>
+        [...prev.filter((x) => x.id !== h.id), h].sort(
+          (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+        )
+      );
+      setNewHolidayDate("");
+      setNewHolidayNote("");
+    } else {
+      alert("追加に失敗しました");
+    }
+  }
+
+  async function removeHoliday(id: string) {
+    setHolidays((prev) => prev.filter((h) => h.id !== id));
+    await fetch(`/api/org-holidays/${id}`, { method: "DELETE" });
   }
 
   async function addDayOff(userId: string) {
@@ -110,6 +208,63 @@ export default function SettingsBoard({
     await fetch(`/api/days-off/${id}`, { method: "DELETE" });
   }
 
+  async function invite() {
+    if (!inviteEmail.trim() || inviting) return;
+    setInviting(true);
+    setInviteError("");
+    const res = await fetch("/api/orgs/members", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
+    });
+    setInviting(false);
+    if (res.ok) {
+      const m = (await res.json()) as OrgMemberLite;
+      setOrgMembers((prev) => [...prev.filter((x) => x.id !== m.id), m]);
+      setInviteEmail("");
+      router.refresh();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      setInviteError(data.error ?? "招待に失敗しました");
+    }
+  }
+
+  async function changeRole(memberId: string, role: OrgRoleStr) {
+    const res = await fetch(`/api/orgs/members/${memberId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role }),
+    });
+    if (res.ok) {
+      setOrgMembers((prev) =>
+        prev.map((m) => (m.id === memberId ? { ...m, role } : m))
+      );
+      router.refresh();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error ?? "変更に失敗しました");
+    }
+  }
+
+  async function removeMember(m: OrgMemberLite) {
+    if (
+      !confirm(
+        `${m.user.name ?? m.user.email} を組織から削除しますか？`
+      )
+    )
+      return;
+    const res = await fetch(`/api/orgs/members/${m.id}`, {
+      method: "DELETE",
+    });
+    if (res.ok) {
+      setOrgMembers((prev) => prev.filter((x) => x.id !== m.id));
+      router.refresh();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error ?? "削除に失敗しました");
+    }
+  }
+
   function fmt(date: string) {
     return new Date(date).toLocaleDateString("ja-JP", {
       year: "numeric",
@@ -121,7 +276,158 @@ export default function SettingsBoard({
   }
 
   return (
-    <div className="max-w-2xl space-y-8">
+    <div className="max-w-3xl space-y-8">
+      {/* 組織ロゴ */}
+      <section className="rounded-xl border border-neutral-200 bg-white p-6">
+        <h2 className="mb-1 font-semibold text-neutral-900">組織ロゴ</h2>
+        <p className="mb-4 text-sm text-neutral-500">
+          ヘッダーの組織スイッチャーに表示されます。
+          {!isAdmin && "変更は管理者のみ行えます。"}
+        </p>
+        <div className="flex items-center gap-4">
+          {logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={logoUrl}
+              alt="組織ロゴ"
+              className="h-14 w-14 rounded-lg border border-neutral-200 object-cover"
+            />
+          ) : (
+            <div className="flex h-14 w-14 items-center justify-center rounded-lg border border-dashed border-neutral-300 text-xs text-neutral-400">
+              未設定
+            </div>
+          )}
+          {isAdmin && (
+            <div className="flex flex-col gap-1.5">
+              <input
+                ref={logoFileRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) uploadLogo(f);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                onClick={() => logoFileRef.current?.click()}
+                disabled={logoUploading}
+                className="rounded-md border border-neutral-200 px-3 py-1.5 text-xs text-neutral-600 hover:border-neutral-400 disabled:opacity-50"
+              >
+                {logoUploading ? "アップロード中…" : "画像を選択（2MBまで）"}
+              </button>
+              {logoUrl && (
+                <button
+                  onClick={removeLogo}
+                  className="rounded-md px-3 py-1 text-xs text-neutral-400 hover:text-red-500"
+                >
+                  削除
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* メンバー管理 */}
+      <section className="rounded-xl border border-neutral-200 bg-white p-6">
+        <h2 className="mb-1 font-semibold text-neutral-900">メンバー管理</h2>
+        <p className="mb-4 text-sm text-neutral-500">
+          管理者＝すべて操作可能／参加者＝タスクの作成・編集が可能（組織設定は不可）／閲覧者＝閲覧のみ。
+        </p>
+
+        <div className="mb-4 divide-y divide-neutral-100">
+          {orgMembers.map((m) => (
+            <div key={m.id} className="flex items-center gap-3 py-2.5">
+              <Avatar user={m.user} size={28} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-neutral-800">
+                  {m.user.name ?? m.user.email}
+                  {m.user.id === myUserId && (
+                    <span className="ml-1.5 text-xs text-neutral-400">
+                      (自分)
+                    </span>
+                  )}
+                </p>
+                <p className="truncate text-xs text-neutral-400">
+                  {m.user.email}
+                </p>
+              </div>
+              {isAdmin ? (
+                <>
+                  <select
+                    value={m.role}
+                    onChange={(e) =>
+                      changeRole(m.id, e.target.value as OrgRoleStr)
+                    }
+                    className="rounded-md border border-neutral-200 px-2 py-1 text-sm outline-none focus:border-neutral-400"
+                  >
+                    {(Object.keys(ROLE_LABELS) as OrgRoleStr[]).map((r) => (
+                      <option key={r} value={r}>
+                        {ROLE_LABELS[r]}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => removeMember(m)}
+                    className="rounded-md px-2 py-1 text-sm text-neutral-300 hover:bg-red-50 hover:text-red-500"
+                    title="組織から削除"
+                  >
+                    ✕
+                  </button>
+                </>
+              ) : (
+                <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs text-neutral-600">
+                  {ROLE_LABELS[m.role]}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {isAdmin && (
+          <div>
+            <div className="flex flex-wrap gap-2">
+              <input
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.nativeEvent.isComposing)
+                    invite();
+                }}
+                placeholder="member@example.com"
+                className="min-w-52 flex-1 rounded-md border border-neutral-200 px-2 py-1.5 text-sm outline-none focus:border-neutral-400"
+              />
+              <select
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value as OrgRoleStr)}
+                className="rounded-md border border-neutral-200 px-2 py-1.5 text-sm outline-none focus:border-neutral-400"
+              >
+                {(Object.keys(ROLE_LABELS) as OrgRoleStr[]).map((r) => (
+                  <option key={r} value={r}>
+                    {ROLE_LABELS[r]}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={invite}
+                disabled={inviting || !inviteEmail.trim()}
+                className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm text-white hover:bg-neutral-700 disabled:opacity-50"
+              >
+                招待
+              </button>
+            </div>
+            {inviteError && (
+              <p className="mt-1.5 text-xs text-red-500">{inviteError}</p>
+            )}
+            <p className="mt-1.5 text-xs text-neutral-400">
+              ※ 相手が一度ログイン済みである必要があります
+            </p>
+          </div>
+        )}
+      </section>
+
       {/* 非稼働曜日 */}
       <section className="rounded-xl border border-neutral-200 bg-white p-6">
         <h2 className="mb-1 font-semibold text-neutral-900">非稼働曜日</h2>
@@ -136,10 +442,11 @@ export default function SettingsBoard({
             <button
               key={day}
               onClick={() => toggleWeekday(day)}
-              className={`h-10 w-10 rounded-lg border text-sm font-medium transition ${
+              disabled={!isAdmin}
+              className={`h-10 w-10 rounded-lg border text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
                 nonWorking.includes(day)
                   ? "border-neutral-900 bg-neutral-900 text-white"
-                  : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
+                  : "border-neutral-200 bg-white text-neutral-600 enabled:hover:bg-neutral-50"
               }`}
             >
               {label}
@@ -148,11 +455,76 @@ export default function SettingsBoard({
         </div>
       </section>
 
+      {/* 組織の非稼働日 */}
+      <section className="rounded-xl border border-neutral-200 bg-white p-6">
+        <h2 className="mb-1 font-semibold text-neutral-900">
+          組織の非稼働日
+        </h2>
+        <p className="mb-4 text-sm text-neutral-500">
+          祝日や全社休業日など、組織全体で稼働しない特定の日を設定します。全メンバーのスケジュールに反映されます。
+        </p>
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {holidays.length === 0 && (
+            <span className="text-xs text-neutral-400">
+              非稼働日はありません
+            </span>
+          )}
+          {holidays.map((h) => (
+            <span
+              key={h.id}
+              className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-1 text-xs text-neutral-600"
+              title={h.note ?? undefined}
+            >
+              {fmt(h.date)}
+              {h.note && (
+                <span className="text-neutral-400">（{h.note}）</span>
+              )}
+              {isAdmin && (
+                <button
+                  onClick={() => removeHoliday(h.id)}
+                  className="text-neutral-400 hover:text-red-500"
+                  title="削除"
+                >
+                  ✕
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+        {isAdmin && (
+          <div className="flex flex-wrap gap-2">
+            <input
+              type="date"
+              value={newHolidayDate}
+              onChange={(e) => setNewHolidayDate(e.target.value)}
+              className="rounded-md border border-neutral-200 px-2 py-1.5 text-sm outline-none focus:border-neutral-400"
+            />
+            <input
+              value={newHolidayNote}
+              onChange={(e) => setNewHolidayNote(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing)
+                  addHoliday();
+              }}
+              placeholder="メモ（例: 祝日、夏季休業）"
+              className="w-52 rounded-md border border-neutral-200 px-2 py-1.5 text-sm outline-none focus:border-neutral-400"
+            />
+            <button
+              onClick={addHoliday}
+              disabled={!newHolidayDate || addingHoliday}
+              className="rounded-md bg-neutral-100 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-200 disabled:opacity-50"
+            >
+              追加
+            </button>
+          </div>
+        )}
+      </section>
+
       {/* 1日の稼働時間 */}
       <section className="rounded-xl border border-neutral-200 bg-white p-6">
         <h2 className="mb-1 font-semibold text-neutral-900">1日の稼働時間</h2>
         <p className="mb-4 text-sm text-neutral-500">
-          全体のデフォルト稼働時間です。タスクは基本的にこの時間で1日に割り当てられます。
+          組織のデフォルト稼働時間です。タスクは基本的にこの時間で1日に割り当てられます。
           {hoursStatus === "saving" && (
             <span className="ml-2 text-neutral-400">保存中…</span>
           )}
@@ -167,27 +539,31 @@ export default function SettingsBoard({
             max="24"
             step="0.5"
             value={dailyHours}
+            disabled={!isAdmin}
             onChange={(e) => {
               setDailyHours(e.target.value);
               setHoursStatus("");
             }}
             onBlur={saveDailyHours}
-            className="w-24 rounded-md border border-neutral-200 px-2 py-1.5 text-sm outline-none focus:border-neutral-400"
+            className="w-24 rounded-md border border-neutral-200 px-2 py-1.5 text-sm outline-none focus:border-neutral-400 disabled:bg-neutral-50 disabled:text-neutral-400"
           />
           <span className="text-sm text-neutral-500">時間 / 日</span>
         </div>
       </section>
 
-      {/* メンバー別の非稼働日 */}
+      {/* メンバー別の設定 */}
       <section className="rounded-xl border border-neutral-200 bg-white p-6">
         <h2 className="mb-1 font-semibold text-neutral-900">
           メンバー別の設定
         </h2>
         <p className="mb-4 text-sm text-neutral-500">
-          1日の稼働限界（未入力なら全体設定を使用。入力があればそちらが優先）と、休暇などの日単位の非稼働日を設定します。
+          1日の稼働限界（未入力なら組織設定を使用。入力があればそちらが優先）と、休暇などの日単位の非稼働日を設定します。
+          {!isAdmin && "自分の設定のみ変更できます。"}
         </p>
         <div className="space-y-5">
-          {people.map((u) => {
+          {orgMembers.map((m) => {
+            const u = m.user;
+            const editable = canEditPerson(u.id);
             const list = daysOff.filter((d) => d.userId === u.id);
             return (
               <div key={u.id} className="border-t border-neutral-100 pt-4">
@@ -205,6 +581,7 @@ export default function SettingsBoard({
                       step="0.5"
                       value={capacities[u.id] ?? ""}
                       placeholder={`${initialDailyWorkHours}`}
+                      disabled={!editable}
                       onChange={(e) => {
                         setCapacities((p) => ({
                           ...p,
@@ -213,7 +590,7 @@ export default function SettingsBoard({
                         setCapStatus((p) => ({ ...p, [u.id]: "" }));
                       }}
                       onBlur={() => saveCapacity(u.id)}
-                      className="w-16 rounded-md border border-neutral-200 px-2 py-1 text-sm outline-none focus:border-neutral-400"
+                      className="w-16 rounded-md border border-neutral-200 px-2 py-1 text-sm outline-none focus:border-neutral-400 disabled:bg-neutral-50 disabled:text-neutral-400"
                     />
                     h/日
                     {capStatus[u.id] && (
@@ -235,36 +612,40 @@ export default function SettingsBoard({
                       className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-1 text-xs text-neutral-600"
                     >
                       {fmt(d.date)}
-                      <button
-                        onClick={() => removeDayOff(d.id)}
-                        className="text-neutral-400 hover:text-red-500"
-                        title="削除"
-                      >
-                        ✕
-                      </button>
+                      {editable && (
+                        <button
+                          onClick={() => removeDayOff(d.id)}
+                          className="text-neutral-400 hover:text-red-500"
+                          title="削除"
+                        >
+                          ✕
+                        </button>
+                      )}
                     </span>
                   ))}
                 </div>
-                <div className="flex gap-2">
-                  <input
-                    type="date"
-                    value={newDates[u.id] ?? ""}
-                    onChange={(e) =>
-                      setNewDates((prev) => ({
-                        ...prev,
-                        [u.id]: e.target.value,
-                      }))
-                    }
-                    className="rounded-md border border-neutral-200 px-2 py-1.5 text-sm outline-none focus:border-neutral-400"
-                  />
-                  <button
-                    onClick={() => addDayOff(u.id)}
-                    disabled={!newDates[u.id] || adding === u.id}
-                    className="rounded-md bg-neutral-100 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-200 disabled:opacity-50"
-                  >
-                    追加
-                  </button>
-                </div>
+                {editable && (
+                  <div className="flex gap-2">
+                    <input
+                      type="date"
+                      value={newDates[u.id] ?? ""}
+                      onChange={(e) =>
+                        setNewDates((prev) => ({
+                          ...prev,
+                          [u.id]: e.target.value,
+                        }))
+                      }
+                      className="rounded-md border border-neutral-200 px-2 py-1.5 text-sm outline-none focus:border-neutral-400"
+                    />
+                    <button
+                      onClick={() => addDayOff(u.id)}
+                      disabled={!newDates[u.id] || adding === u.id}
+                      className="rounded-md bg-neutral-100 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-200 disabled:opacity-50"
+                    >
+                      追加
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}

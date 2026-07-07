@@ -1,8 +1,9 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser, getWorkspaceSettings } from "@/lib/data";
+import { getCurrentOrg } from "@/lib/org";
 import SettingsBoard from "@/components/SettingsBoard";
-import type { DayOffLite, UserLite } from "@/lib/types";
+import type { DayOffLite, OrgHolidayLite, OrgMemberLite } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -11,52 +12,56 @@ export default async function SettingsPage() {
   if (!user?.id) redirect("/login");
   const userId = user.id;
 
-  const { nonWorkingWeekdays, dailyWorkHours } = await getWorkspaceSettings();
+  const org = await getCurrentOrg(userId);
+  if (!org) redirect("/projects");
 
-  // 自分とプロジェクトを共有するメンバー（自分含む）
-  const projects = await prisma.project.findMany({
-    where: { members: { some: { userId } } },
-    include: { members: { include: { user: true } } },
+  const { nonWorkingWeekdays, dailyWorkHours } = await getWorkspaceSettings(
+    org.orgId
+  );
+
+  const orgRecord = await prisma.organization.findUnique({
+    where: { id: org.orgId },
+    select: { logoUrl: true },
   });
-  const peopleMap = new Map<string, UserLite>();
-  for (const p of projects) {
-    for (const m of p.members) {
-      if (!peopleMap.has(m.userId)) {
-        peopleMap.set(m.userId, {
-          id: m.user.id,
-          name: m.user.name,
-          email: m.user.email,
-          image: m.user.image,
-          dailyCapacity: m.user.dailyCapacity,
-        });
-      }
-    }
-  }
-  // プロジェクト未参加でも自分は表示
-  if (!peopleMap.has(userId)) {
-    peopleMap.set(userId, {
-      id: userId,
-      name: user.name ?? null,
-      email: user.email ?? null,
-      image: user.image ?? null,
-    });
-  }
-  const people = [...peopleMap.values()];
+
+  const rawMembers = await prisma.organizationMember.findMany({
+    where: { orgId: org.orgId },
+    include: { user: true },
+    orderBy: { createdAt: "asc" },
+  });
+  const orgMembers = JSON.parse(JSON.stringify(rawMembers)) as OrgMemberLite[];
 
   const rawDaysOff = await prisma.dayOff.findMany({
-    where: { userId: { in: people.map((p) => p.id) } },
+    where: { userId: { in: rawMembers.map((m) => m.userId) } },
     orderBy: { date: "asc" },
   });
   const daysOff = JSON.parse(JSON.stringify(rawDaysOff)) as DayOffLite[];
 
+  const rawHolidays = await prisma.orgHoliday.findMany({
+    where: { orgId: org.orgId },
+    orderBy: { date: "asc" },
+  });
+  const orgHolidays = JSON.parse(
+    JSON.stringify(rawHolidays)
+  ) as OrgHolidayLite[];
+
   return (
     <div>
-      <h1 className="mb-6 text-xl font-semibold text-neutral-900">設定</h1>
+      <h1 className="mb-1 text-xl font-semibold text-neutral-900">設定</h1>
+      <p className="mb-6 text-sm text-neutral-400">
+        組織「{org.orgName}」の設定
+        {org.role !== "ADMIN" &&
+          "（組織設定の変更は管理者のみ行えます）"}
+      </p>
       <SettingsBoard
         initialNonWorkingWeekdays={nonWorkingWeekdays}
         initialDailyWorkHours={dailyWorkHours}
-        people={people}
+        initialOrgHolidays={orgHolidays}
+        orgMembers={orgMembers}
         initialDaysOff={daysOff}
+        myUserId={userId}
+        myRole={org.role}
+        initialLogoUrl={orgRecord?.logoUrl ?? null}
       />
     </div>
   );

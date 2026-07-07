@@ -7,10 +7,12 @@ import Avatar from "@/components/Avatar";
 export default function MembersBar({
   projectId,
   members,
+  canAdd = true,
   onAdd,
 }: {
   projectId: string;
   members: MemberLite[];
+  canAdd?: boolean;
   onAdd: (m: MemberLite) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -51,13 +53,15 @@ export default function MembersBar({
           </span>
         )}
       </div>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="ml-2 flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-neutral-300 text-neutral-400 hover:border-neutral-400 hover:text-neutral-700"
-        title="メンバーを追加"
-      >
-        +
-      </button>
+      {canAdd && (
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="ml-2 flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-neutral-300 text-neutral-400 hover:border-neutral-400 hover:text-neutral-700"
+          title="メンバーを追加"
+        >
+          +
+        </button>
+      )}
 
       {open && (
         <div className="absolute right-0 top-9 z-30 w-72 rounded-lg border border-neutral-200 bg-white p-3 shadow-lg">

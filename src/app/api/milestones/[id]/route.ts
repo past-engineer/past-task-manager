@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUserId } from "@/lib/data";
+import { getProjectRole, canEdit } from "@/lib/org";
 
-async function findAccessible(id: string, userId: string) {
-  return prisma.milestone.findFirst({
-    where: { id, project: { members: { some: { userId } } } },
-  });
+async function findEditable(id: string, userId: string) {
+  const milestone = await prisma.milestone.findUnique({ where: { id } });
+  if (!milestone) return null;
+  if (!canEdit(await getProjectRole(milestone.projectId, userId))) return null;
+  return milestone;
 }
 
 export async function PATCH(
@@ -15,7 +17,7 @@ export async function PATCH(
   try {
     const userId = await requireUserId();
     const { id } = await params;
-    if (!(await findAccessible(id, userId))) {
+    if (!(await findEditable(id, userId))) {
       return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
     }
     const body = await req.json();
@@ -46,7 +48,7 @@ export async function DELETE(
   try {
     const userId = await requireUserId();
     const { id } = await params;
-    if (!(await findAccessible(id, userId))) {
+    if (!(await findEditable(id, userId))) {
       return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
     }
     await prisma.milestone.delete({ where: { id } });

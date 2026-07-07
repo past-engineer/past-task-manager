@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser, getNonWorkingWeekdays } from "@/lib/data";
+import { getCurrentUser, getWorkspaceSettings } from "@/lib/data";
+import { getCurrentOrg } from "@/lib/org";
 import AllProjectsGantt, {
   type GanttTask,
 } from "@/components/AllProjectsGantt";
@@ -13,8 +14,11 @@ export default async function AllGanttPage() {
   if (!user?.id) redirect("/login");
   const userId = user.id;
 
+  const org = await getCurrentOrg(userId);
+  if (!org) redirect("/projects");
+
   const projects = await prisma.project.findMany({
-    where: { members: { some: { userId } } },
+    where: { orgId: org.orgId, archived: false },
     include: { members: { include: { user: true } } },
     orderBy: { createdAt: "asc" },
   });
@@ -22,7 +26,7 @@ export default async function AllGanttPage() {
   const rawTasks = await prisma.task.findMany({
     where: {
       parentId: null,
-      project: { members: { some: { userId } } },
+      project: { orgId: org.orgId, archived: false },
     },
     include: {
       assignee: true,
@@ -35,7 +39,7 @@ export default async function AllGanttPage() {
   const tasks = JSON.parse(JSON.stringify(rawTasks)) as GanttTask[];
 
   const rawMilestones = await prisma.milestone.findMany({
-    where: { project: { members: { some: { userId } } } },
+    where: { project: { orgId: org.orgId, archived: false } },
     orderBy: { date: "asc" },
   });
   const milestones = JSON.parse(
@@ -50,6 +54,10 @@ export default async function AllGanttPage() {
     return { id: p.id, name: p.name, color: p.color };
   });
 
+  const { nonWorkingWeekdays, holidays } = await getWorkspaceSettings(
+    org.orgId
+  );
+
   return (
     <div>
       <h1 className="mb-6 text-xl font-semibold text-neutral-900">
@@ -59,7 +67,8 @@ export default async function AllGanttPage() {
         projects={projectList}
         tasks={tasks}
         milestones={milestones}
-        nonWorkingWeekdays={await getNonWorkingWeekdays()}
+        nonWorkingWeekdays={nonWorkingWeekdays}
+        orgHolidays={holidays}
         membersByProject={membersByProject}
         currentUserId={userId}
       />

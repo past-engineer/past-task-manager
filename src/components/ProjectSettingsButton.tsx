@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 const COLORS = ["#4f46e5", "#0ea5e9", "#10b981", "#f59e0b", "#ec4899", "#ef4444"];
@@ -10,18 +10,48 @@ export default function ProjectSettingsButton({
   name: initialName,
   description: initialDescription,
   color: initialColor,
+  thumbnailUrl: initialThumbnail = null,
 }: {
   projectId: string;
   name: string;
   description: string | null;
   color: string;
+  thumbnailUrl?: string | null;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(initialName);
   const [description, setDescription] = useState(initialDescription ?? "");
   const [color, setColor] = useState(initialColor);
+  const [thumbnail, setThumbnail] = useState<string | null>(initialThumbnail);
+  const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function uploadThumbnail(file: File) {
+    setUploading(true);
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch(`/api/projects/${projectId}/thumbnail`, {
+      method: "POST",
+      body: fd,
+    });
+    setUploading(false);
+    if (res.ok) {
+      const data = await res.json();
+      setThumbnail(data.thumbnailUrl);
+      router.refresh();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error ?? "アップロードに失敗しました（Blob未設定の可能性）");
+    }
+  }
+
+  async function removeThumbnail() {
+    setThumbnail(null);
+    await fetch(`/api/projects/${projectId}/thumbnail`, { method: "DELETE" });
+    router.refresh();
+  }
 
   async function save() {
     if (!name.trim() || saving) return;
@@ -101,6 +131,51 @@ export default function ProjectSettingsButton({
               rows={3}
               className="mb-4 w-full resize-none rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-400"
             />
+            <label className="mb-1 block text-sm font-medium text-neutral-600">
+              サムネイル
+            </label>
+            <div className="mb-4 flex items-center gap-3">
+              {thumbnail ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={thumbnail}
+                  alt="サムネイル"
+                  className="h-16 w-28 rounded-md border border-neutral-200 object-cover"
+                />
+              ) : (
+                <div className="flex h-16 w-28 items-center justify-center rounded-md border border-dashed border-neutral-300 text-xs text-neutral-400">
+                  未設定
+                </div>
+              )}
+              <div className="flex flex-col gap-1.5">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) uploadThumbnail(f);
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  disabled={uploading}
+                  className="rounded-md border border-neutral-200 px-3 py-1.5 text-xs text-neutral-600 hover:border-neutral-400 disabled:opacity-50"
+                >
+                  {uploading ? "アップロード中…" : "画像を選択（4MBまで）"}
+                </button>
+                {thumbnail && (
+                  <button
+                    onClick={removeThumbnail}
+                    className="rounded-md px-3 py-1 text-xs text-neutral-400 hover:text-red-500"
+                  >
+                    削除
+                  </button>
+                )}
+              </div>
+            </div>
             <label className="mb-1 block text-sm font-medium text-neutral-600">
               カラー
             </label>

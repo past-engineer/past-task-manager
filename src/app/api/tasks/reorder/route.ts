@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireUserId, userCanAccessProject } from "@/lib/data";
+import { requireUserId } from "@/lib/data";
+import { getProjectRole, canEdit } from "@/lib/org";
 import { isTaskStatus } from "@/lib/constants";
 
 // カンバン/リストのドラッグ後にまとめて並び順とステータスを更新
@@ -15,7 +16,7 @@ export async function PATCH(req: Request) {
     if (!projectId || updates.length === 0) {
       return NextResponse.json({ error: "invalid payload" }, { status: 400 });
     }
-    if (!(await userCanAccessProject(projectId, userId))) {
+    if (!canEdit(await getProjectRole(projectId, userId))) {
       return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
     }
 

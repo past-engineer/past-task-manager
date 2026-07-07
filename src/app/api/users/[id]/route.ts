@@ -1,29 +1,25 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUserId } from "@/lib/data";
+import { requireOrgContext, getOrgRole } from "@/lib/org";
 
-/** 対象ユーザーが自分とプロジェクトを共有しているか（自分自身は常にOK） */
-async function canManageUser(targetUserId: string, userId: string) {
-  if (targetUserId === userId) return true;
-  const shared = await prisma.projectMember.findFirst({
-    where: {
-      userId: targetUserId,
-      project: { members: { some: { userId } } },
-    },
-    select: { id: true },
-  });
-  return !!shared;
-}
-
+// 稼働限界の変更：自分は参加者以上、他人は管理者のみ
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const userId = await requireUserId();
+    const ctx = await requireOrgContext(userId);
     const { id } = await params;
-    if (!(await canManageUser(id, userId))) {
+    if (ctx.role === "VIEWER") {
       return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+    }
+    if (id !== userId && ctx.role !== "ADMIN") {
+      return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+    }
+    if (!(await getOrgRole(ctx.orgId, id))) {
+      return NextResponse.json({ error: "NOT_IN_ORG" }, { status: 400 });
     }
     const body = await req.json();
     if (body.dailyCapacity === undefined) {

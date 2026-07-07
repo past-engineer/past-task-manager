@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import type { UserLite } from "@/lib/types";
 
 function initials(user?: Pick<UserLite, "name" | "email"> | null) {
@@ -32,8 +35,10 @@ export default function Avatar({
   size?: number;
   title?: string;
 }) {
+  const [imgError, setImgError] = useState(false);
   const label = title ?? user?.name ?? user?.email ?? "未割当";
-  if (user?.image) {
+
+  if (user?.image && !imgError) {
     // eslint-disable-next-line @next/next/no-img-element
     return (
       <img
@@ -42,6 +47,8 @@ export default function Avatar({
         title={label}
         width={size}
         height={size}
+        referrerPolicy="no-referrer"
+        onError={() => setImgError(true)}
         className="rounded-full object-cover ring-1 ring-white"
         style={{ width: size, height: size }}
       />

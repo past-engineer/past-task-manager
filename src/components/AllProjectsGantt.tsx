@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useUndo, pickPrev } from "@/lib/useUndo";
 import type { TaskLite, MemberLite, MilestoneLite } from "@/lib/types";
 import { STATUS_COLORS } from "@/lib/constants";
 import Avatar from "@/components/Avatar";
@@ -63,6 +64,7 @@ export default function AllProjectsGantt({
   tasks: initialTasks,
   milestones: initialMilestones,
   nonWorkingWeekdays,
+  orgHolidays = [],
   membersByProject,
   currentUserId,
 }: {
@@ -70,13 +72,18 @@ export default function AllProjectsGantt({
   tasks: GanttTask[];
   milestones: MilestoneLite[];
   nonWorkingWeekdays: number[];
+  orgHolidays?: string[];
   membersByProject: Record<string, MemberLite[]>;
   currentUserId: string;
 }) {
-  const isOff =
+  const holidaySet = new Set(
+    orgHolidays.map((d) => dayValue(d)).filter((d): d is number => d !== null)
+  );
+  const weekOff =
     nonWorkingWeekdays.length >= 7
       ? () => false
       : (d: number) => nonWorkingWeekdays.includes(weekdayOf(d));
+  const isOff = (d: number) => weekOff(d) || holidaySet.has(d);
 
   function resolveDrag(st: DragState): { s: number; e: number } {
     const off = st.delta * DAY_MS;
@@ -184,7 +191,18 @@ export default function AllProjectsGantt({
     return map;
   }, [tasks]);
 
-  async function patch(id: string, data: Partial<TaskLite>) {
+  const pushUndo = useUndo();
+  const tasksStateRef = useRef(tasks);
+  const milestonesStateRef = useRef(milestones);
+  useEffect(() => {
+    tasksStateRef.current = tasks;
+  }, [tasks]);
+  useEffect(() => {
+    milestonesStateRef.current = milestones;
+  }, [milestones]);
+
+  // 取り消し用（undo スタックには積まない）
+  async function rawPatch(id: string, data: Partial<TaskLite>) {
     setTasks((prev) =>
       prev.map((t) => (t.id === id ? ({ ...t, ...data } as GanttTask) : t))
     );
@@ -193,6 +211,18 @@ export default function AllProjectsGantt({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     });
+  }
+
+  async function patch(id: string, data: Partial<TaskLite>) {
+    const prev = tasksStateRef.current.find((t) => t.id === id);
+    if (prev) {
+      const prevData = pickPrev(prev as TaskLite, data);
+      pushUndo(
+        () => rawPatch(id, prevData),
+        () => rawPatch(id, data)
+      );
+    }
+    await rawPatch(id, data);
   }
 
   function barGeometry(task: GanttTask) {
@@ -268,7 +298,7 @@ export default function AllProjectsGantt({
     }
   }
 
-  async function patchMilestone(id: string, dateIso: string) {
+  async function rawPatchMilestone(id: string, dateIso: string) {
     setMilestones((prev) =>
       prev.map((m) => (m.id === id ? { ...m, date: dateIso } : m))
     );
@@ -277,6 +307,18 @@ export default function AllProjectsGantt({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ date: dateIso }),
     });
+  }
+
+  async function patchMilestone(id: string, dateIso: string) {
+    const prev = milestonesStateRef.current.find((m) => m.id === id);
+    if (prev) {
+      const prevDate = prev.date.slice(0, 10);
+      pushUndo(
+        () => rawPatchMilestone(id, prevDate),
+        () => rawPatchMilestone(id, dateIso)
+      );
+    }
+    await rawPatchMilestone(id, dateIso);
   }
 
   function startMsDrag(e: React.PointerEvent<HTMLElement>, m: MilestoneLite) {

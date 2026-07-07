@@ -27,6 +27,7 @@ model User {
 
   // アプリ関連
   memberships    ProjectMember[]
+  orgMemberships OrganizationMember[]
   assignedTasks  Task[]          @relation("TaskAssignee")
   comments       Comment[]
   attachments    Attachment[]
@@ -73,6 +74,60 @@ model VerificationToken {
 
 // ===== アプリ本体 =====
 
+// 組織の権限：管理者 / 参加者 / 閲覧者
+enum OrgRole {
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+// 組織（ワークスペース）
+model Organization {
+  id   String @id @default(cuid())
+  name String
+  // 組織ロゴ（Vercel Blob）
+  logoUrl  String? @db.Text
+  logoPath String? @db.Text
+
+  members  OrganizationMember[]
+  projects Project[]
+  folders  ProjectFolder[]
+  setting  WorkspaceSetting?
+  holidays OrgHoliday[]
+
+  createdAt DateTime @default(now())
+}
+
+// 組織全体の非稼働日（祝日・全社休業日など、日単位）
+model OrgHoliday {
+  id    String   @id @default(cuid())
+  orgId String
+  date  DateTime
+  note  String?
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([orgId, date])
+  @@index([orgId])
+}
+
+model OrganizationMember {
+  id     String  @id @default(cuid())
+  orgId  String
+  userId String
+  role   OrgRole @default(MEMBER)
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([orgId, userId])
+  @@index([userId])
+}
+
 enum Role {
   OWNER
   MEMBER
@@ -90,13 +145,43 @@ model Project {
   name        String
   description String?  @db.Text
   color       String   @default("#4f46e5")
+  // サムネイル画像（Vercel Blob）
+  thumbnailUrl  String? @db.Text
+  thumbnailPath String? @db.Text
+  // 所属組織（移行前の既存行は null の場合あり）
+  orgId       String?
+  // フォルダ分け（null = 未分類）
+  folderId    String?
+  // アーカイブ済みはスケジュール系ビューに表示しない
+  archived    Boolean  @default(false)
 
+  org        Organization?  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  folder     ProjectFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
   members    ProjectMember[]
   tasks      Task[]
   milestones Milestone[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([folderId])
+  @@index([orgId])
+}
+
+// プロジェクトのフォルダ（組織内で共有）
+model ProjectFolder {
+  id       String  @id @default(cuid())
+  name     String
+  position Int     @default(0)
+  // 所属組織（移行前の既存行は null の場合あり）
+  orgId    String?
+
+  org      Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  projects Project[]
+
+  createdAt DateTime @default(now())
+
+  @@index([orgId])
 }
 
 model ProjectMember {
@@ -169,12 +254,16 @@ model TaskDailyHours {
 
 // 管理画面全体の設定（1レコードのみ、id="global"）
 model WorkspaceSetting {
-  id                 String   @id @default("global")
+  id                 String   @id @default(cuid())
+  // 所属組織（移行前の既存行は null の場合あり）
+  orgId              String?  @unique
   // 非稼働曜日（0=日 〜 6=土）
   nonWorkingWeekdays Int[]    @default([0, 6])
   // 1日の稼働時間（時間）
   dailyWorkHours     Float    @default(8)
   updatedAt          DateTime @updatedAt
+
+  org Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
 }
 
 // メンバーごとの非稼働日（休暇など、日単位）

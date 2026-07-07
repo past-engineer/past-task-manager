@@ -14,50 +14,52 @@ export async function requireUserId(): Promise<string> {
   return user.id;
 }
 
-/** ユーザーがメンバーであるプロジェクトのみ。アクセス権がなければ null */
+/** ユーザーがアクセスできるプロジェクトのみ。アクセス権がなければ null */
 export async function getProjectForUser(projectId: string, userId: string) {
   return prisma.project.findFirst({
-    where: { id: projectId, members: { some: { userId } } },
+    where: { id: projectId, org: { members: { some: { userId } } } },
     include: {
       members: { include: { user: true }, orderBy: { createdAt: "asc" } },
     },
   });
 }
 
-/** 単純なアクセス権チェック */
+/** アクセス権チェック（プロジェクトの所属組織のメンバーか） */
 export async function userCanAccessProject(projectId: string, userId: string) {
-  const count = await prisma.projectMember.count({
-    where: { projectId, userId },
+  const count = await prisma.project.count({
+    where: { id: projectId, org: { members: { some: { userId } } } },
   });
   return count > 0;
 }
 
-/** 全体設定：非稼働曜日（0=日〜6=土）。未設定なら土日 */
-export async function getNonWorkingWeekdays(): Promise<number[]> {
-  const s = await prisma.workspaceSetting.findUnique({
-    where: { id: "global" },
-  });
-  return s?.nonWorkingWeekdays ?? [0, 6];
-}
-
-/** 全体設定（非稼働曜日＋1日の稼働時間） */
-export async function getWorkspaceSettings(): Promise<{
+/** 組織の全体設定（非稼働曜日＋1日の稼働時間＋組織の非稼働日） */
+export async function getWorkspaceSettings(orgId: string): Promise<{
   nonWorkingWeekdays: number[];
   dailyWorkHours: number;
+  holidays: string[];
 }> {
-  const s = await prisma.workspaceSetting.findUnique({
-    where: { id: "global" },
-  });
+  const [s, holidays] = await Promise.all([
+    prisma.workspaceSetting.findUnique({ where: { orgId } }),
+    prisma.orgHoliday.findMany({
+      where: { orgId },
+      orderBy: { date: "asc" },
+      select: { date: true },
+    }),
+  ]);
   return {
     nonWorkingWeekdays: s?.nonWorkingWeekdays ?? [0, 6],
     dailyWorkHours: s?.dailyWorkHours ?? 8,
+    holidays: holidays.map((h) => h.date.toISOString()),
   };
 }
 
-/** タスク経由でアクセス権チェック（タスクの属するプロジェクトのメンバーか） */
+/** タスク経由でアクセス権チェック（タスクの属する組織のメンバーか） */
 export async function userCanAccessTask(taskId: string, userId: string) {
   const task = await prisma.task.findFirst({
-    where: { id: taskId, project: { members: { some: { userId } } } },
+    where: {
+      id: taskId,
+      project: { org: { members: { some: { userId } } } },
+    },
     select: { id: true, projectId: true },
   });
   return task;

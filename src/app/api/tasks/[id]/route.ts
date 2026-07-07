@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireUserId, userCanAccessTask } from "@/lib/data";
+import { getTaskRole, canEdit } from "@/lib/org";
 import { isTaskStatus } from "@/lib/constants";
 
 export async function GET(
@@ -46,7 +47,7 @@ export async function PATCH(
   try {
     const userId = await requireUserId();
     const { id } = await params;
-    if (!(await userCanAccessTask(id, userId))) {
+    if (!canEdit(await getTaskRole(id, userId))) {
       return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
     }
     const body = await req.json();
@@ -94,7 +95,7 @@ export async function DELETE(
   try {
     const userId = await requireUserId();
     const { id } = await params;
-    if (!(await userCanAccessTask(id, userId))) {
+    if (!canEdit(await getTaskRole(id, userId))) {
       return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
     }
     await prisma.task.delete({ where: { id } });

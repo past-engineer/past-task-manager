@@ -1,20 +1,27 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUserId, getWorkspaceSettings } from "@/lib/data";
+import { requireOrgContext } from "@/lib/org";
 
 export async function GET() {
   try {
-    await requireUserId();
-    const settings = await getWorkspaceSettings();
+    const userId = await requireUserId();
+    const ctx = await requireOrgContext(userId);
+    const settings = await getWorkspaceSettings(ctx.orgId);
     return NextResponse.json(settings);
   } catch {
     return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
   }
 }
 
+// 組織設定の変更は管理者のみ
 export async function PATCH(req: Request) {
   try {
-    await requireUserId();
+    const userId = await requireUserId();
+    const ctx = await requireOrgContext(userId);
+    if (ctx.role !== "ADMIN") {
+      return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+    }
     const body = await req.json();
 
     const data: { nonWorkingWeekdays?: number[]; dailyWorkHours?: number } =
@@ -40,8 +47,8 @@ export async function PATCH(req: Request) {
     }
 
     const setting = await prisma.workspaceSetting.upsert({
-      where: { id: "global" },
-      create: { id: "global", ...data },
+      where: { orgId: ctx.orgId },
+      create: { orgId: ctx.orgId, ...data },
       update: data,
     });
     return NextResponse.json({

@@ -9,10 +9,9 @@ export default async function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-white px-4">
       <div className="w-full max-w-sm">
         <div className="mb-10 text-center">
-          <p className="text-3xl font-bold lowercase tracking-[0.2em] text-neutral-900">
-            past
-          </p>
-          <p className="mt-2 text-[11px] uppercase tracking-[0.34em] text-neutral-400">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.svg" alt="past" className="mx-auto h-9 w-auto" />
+          <p className="mt-3 text-[11px] uppercase tracking-[0.34em] text-neutral-400">
             task manager
           </p>
         </div>

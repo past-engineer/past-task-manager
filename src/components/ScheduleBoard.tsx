@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useUndo, pickPrev } from "@/lib/useUndo";
 import type { TaskLite, MemberLite, UserLite, DayOffLite } from "@/lib/types";
 import { STATUS_LABELS, STATUS_COLORS } from "@/lib/constants";
 import TaskDetailModal from "@/components/TaskDetailModal";
@@ -64,6 +65,7 @@ export default function ScheduleBoard({
   people,
   daysOff,
   nonWorkingWeekdays,
+  orgHolidays = [],
   membersByProject,
   currentUserId,
 }: {
@@ -71,13 +73,24 @@ export default function ScheduleBoard({
   people: UserLite[];
   daysOff: DayOffLite[];
   nonWorkingWeekdays: number[];
+  orgHolidays?: string[];
   membersByProject: Record<string, MemberLite[]>;
   currentUserId: string;
 }) {
-  const isOffWeekday =
+  const holidaySet = useMemo(
+    () =>
+      new Set(
+        orgHolidays
+          .map((d) => dayValue(d))
+          .filter((d): d is number => d !== null)
+      ),
+    [orgHolidays]
+  );
+  const weekOff =
     nonWorkingWeekdays.length >= 7
       ? () => false
       : (d: number) => nonWorkingWeekdays.includes(weekdayOf(d));
+  const isOffWeekday = (d: number) => weekOff(d) || holidaySet.has(d);
   const isOff = isOffWeekday;
   const [tasks, setTasks] = useState<ScheduleTask[]>(initialTasks);
   const [openTask, setOpenTask] = useState<ScheduleTask | null>(null);
@@ -109,7 +122,7 @@ export default function ScheduleBoard({
       (d: number) =>
         isOffWeekday(d) || (uid !== null && !!offByUser.get(uid)?.has(d)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [offByUser, nonWorkingWeekdays]
+    [offByUser, nonWorkingWeekdays, holidaySet]
   );
 
   const dated = useMemo(
@@ -200,7 +213,14 @@ export default function ScheduleBoard({
 
   const totalH = rows.reduce((s, r) => s + r.height, 0);
 
-  async function patch(id: string, data: Partial<TaskLite>) {
+  const pushUndo = useUndo();
+  const tasksStateRef = useRef(tasks);
+  useEffect(() => {
+    tasksStateRef.current = tasks;
+  }, [tasks]);
+
+  // 取り消し用（undo スタックには積まない）
+  async function rawPatch(id: string, data: Partial<TaskLite>) {
     setTasks((prev) =>
       prev.map((t) => (t.id === id ? ({ ...t, ...data } as ScheduleTask) : t))
     );
@@ -209,6 +229,18 @@ export default function ScheduleBoard({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     });
+  }
+
+  async function patch(id: string, data: Partial<TaskLite>) {
+    const prev = tasksStateRef.current.find((t) => t.id === id);
+    if (prev) {
+      const prevData = pickPrev(prev as TaskLite, data);
+      pushUndo(
+        () => rawPatch(id, prevData),
+        () => rawPatch(id, data)
+      );
+    }
+    await rawPatch(id, data);
   }
 
   function rowIndexAtY(clientY: number): number {

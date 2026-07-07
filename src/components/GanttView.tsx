@@ -49,6 +49,7 @@ export default function GanttView({
   tasks,
   milestones,
   nonWorkingWeekdays,
+  orgHolidays = [],
   onOpen,
   onPatch,
   onMilestonePatch,
@@ -57,16 +58,21 @@ export default function GanttView({
   tasks: TaskLite[];
   milestones: MilestoneLite[];
   nonWorkingWeekdays: number[];
+  orgHolidays?: string[];
   onOpen: (id: string) => void;
   onPatch: (id: string, data: Partial<TaskLite>) => void;
   onMilestonePatch: (id: string, dateIso: string) => void;
   onMilestoneOpen: (m: MilestoneLite) => void;
 }) {
-  // 全曜日が非稼働なら実質無効化（無限スキップ防止）
-  const isOff =
+  const holidaySet = new Set(
+    orgHolidays.map((d) => dayValue(d)).filter((d): d is number => d !== null)
+  );
+  // 全曜日が非稼働なら曜日側は実質無効化（無限スキップ防止）
+  const weekOff =
     nonWorkingWeekdays.length >= 7
       ? () => false
       : (d: number) => nonWorkingWeekdays.includes(weekdayOf(d));
+  const isOff = (d: number) => weekOff(d) || holidaySet.has(d);
 
   // ドラッグ中の開始/終了を稼働日ベースで解決
   function resolveDrag(st: DragState): { s: number; e: number } {

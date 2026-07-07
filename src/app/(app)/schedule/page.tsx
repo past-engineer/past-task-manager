@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser, getNonWorkingWeekdays } from "@/lib/data";
+import { getCurrentUser, getWorkspaceSettings } from "@/lib/data";
+import { getCurrentOrg } from "@/lib/org";
 import ScheduleBoard, { type ScheduleTask } from "@/components/ScheduleBoard";
 import type { MemberLite, UserLite, DayOffLite } from "@/lib/types";
 
@@ -11,14 +12,17 @@ export default async function SchedulePage() {
   if (!user?.id) redirect("/login");
   const userId = user.id;
 
+  const org = await getCurrentOrg(userId);
+  if (!org) redirect("/projects");
+
   const projects = await prisma.project.findMany({
-    where: { members: { some: { userId } } },
+    where: { orgId: org.orgId, archived: false },
     include: { members: { include: { user: true } } },
     orderBy: { createdAt: "asc" },
   });
 
   const rawTasks = await prisma.task.findMany({
-    where: { project: { members: { some: { userId } } } },
+    where: { project: { orgId: org.orgId, archived: false } },
     include: {
       assignee: true,
       project: { select: { id: true, name: true, color: true } },
@@ -29,24 +33,30 @@ export default async function SchedulePage() {
 
   const tasks = JSON.parse(JSON.stringify(rawTasks)) as ScheduleTask[];
 
-  // プロジェクト横断のメンバー一覧（重複除去）
-  const peopleMap = new Map<string, UserLite>();
+  // 行 = 組織のメンバー全員
+  const orgMembers = await prisma.organizationMember.findMany({
+    where: { orgId: org.orgId },
+    include: { user: true },
+    orderBy: { createdAt: "asc" },
+  });
+  const people: UserLite[] = orgMembers.map((m) => ({
+    id: m.user.id,
+    name: m.user.name,
+    email: m.user.email,
+    image: m.user.image,
+    dailyCapacity: m.user.dailyCapacity,
+  }));
+
   const membersByProject: Record<string, MemberLite[]> = {};
   for (const p of projects) {
     membersByProject[p.id] = JSON.parse(
       JSON.stringify(p.members)
     ) as MemberLite[];
-    for (const m of p.members) {
-      if (!peopleMap.has(m.userId)) {
-        peopleMap.set(m.userId, {
-          id: m.user.id,
-          name: m.user.name,
-          email: m.user.email,
-          image: m.user.image,
-        });
-      }
-    }
   }
+
+  const { nonWorkingWeekdays, holidays } = await getWorkspaceSettings(
+    org.orgId
+  );
 
   return (
     <div>
@@ -55,18 +65,19 @@ export default async function SchedulePage() {
       </h1>
       <ScheduleBoard
         tasks={tasks}
-        people={[...peopleMap.values()]}
+        people={people}
         daysOff={
           JSON.parse(
             JSON.stringify(
               await prisma.dayOff.findMany({
-                where: { userId: { in: [...peopleMap.keys()] } },
+                where: { userId: { in: people.map((p) => p.id) } },
                 orderBy: { date: "asc" },
               })
             )
           ) as DayOffLite[]
         }
-        nonWorkingWeekdays={await getNonWorkingWeekdays()}
+        nonWorkingWeekdays={nonWorkingWeekdays}
+        orgHolidays={holidays}
         membersByProject={membersByProject}
         currentUserId={userId}
       />

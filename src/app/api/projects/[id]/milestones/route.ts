@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUserId, userCanAccessProject } from "@/lib/data";
+import { getProjectRole, canEdit } from "@/lib/org";
 
 export async function GET(
   _req: Request,
@@ -29,7 +30,7 @@ export async function POST(
   try {
     const userId = await requireUserId();
     const { id } = await params;
-    if (!(await userCanAccessProject(id, userId))) {
+    if (!canEdit(await getProjectRole(id, userId))) {
       return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
     }
     const body = await req.json();

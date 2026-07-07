@@ -29,11 +29,43 @@ export type TaskLite = {
   _count?: { subtasks: number; comments: number; attachments: number };
 };
 
+export type OrgRoleStr = "ADMIN" | "MEMBER" | "VIEWER";
+
+export type OrgMemberLite = {
+  id: string;
+  role: OrgRoleStr;
+  user: UserLite;
+};
+
+export type FolderLite = {
+  id: string;
+  name: string;
+  position: number;
+};
+
+export type ProjectCardData = {
+  id: string;
+  name: string;
+  description: string | null;
+  color: string;
+  thumbnailUrl: string | null;
+  folderId: string | null;
+  archived: boolean;
+  _count: { tasks: number; members: number };
+};
+
 export type MilestoneLite = {
   id: string;
   projectId: string;
   title: string;
   date: string;
+};
+
+export type OrgHolidayLite = {
+  id: string;
+  orgId: string;
+  date: string;
+  note: string | null;
 };
 
 export type DayOffLite = {

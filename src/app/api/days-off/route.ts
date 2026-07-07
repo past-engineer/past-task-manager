@@ -1,35 +1,19 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUserId } from "@/lib/data";
-
-/** 対象ユーザーが自分とプロジェクトを共有しているか（自分自身は常にOK） */
-async function canManageUser(targetUserId: string, userId: string) {
-  if (targetUserId === userId) return true;
-  const shared = await prisma.projectMember.findFirst({
-    where: {
-      userId: targetUserId,
-      project: { members: { some: { userId } } },
-    },
-    select: { id: true },
-  });
-  return !!shared;
-}
+import { requireOrgContext, getOrgRole } from "@/lib/org";
 
 export async function GET(req: Request) {
   try {
     const userId = await requireUserId();
+    const ctx = await requireOrgContext(userId);
     const { searchParams } = new URL(req.url);
     const target = searchParams.get("userId");
     const daysOff = await prisma.dayOff.findMany({
-      where: target
-        ? { userId: target }
-        : {
-            user: {
-              memberships: {
-                some: { project: { members: { some: { userId } } } },
-              },
-            },
-          },
+      where: {
+        user: { orgMemberships: { some: { orgId: ctx.orgId } } },
+        ...(target ? { userId: target } : {}),
+      },
       orderBy: { date: "asc" },
     });
     return NextResponse.json(daysOff);
@@ -38,9 +22,11 @@ export async function GET(req: Request) {
   }
 }
 
+// 自分の非稼働日は参加者以上、他人の分は管理者のみ
 export async function POST(req: Request) {
   try {
     const userId = await requireUserId();
+    const ctx = await requireOrgContext(userId);
     const body = await req.json();
     const targetUserId = (body.userId ?? "").toString();
     const date = body.date ? new Date(body.date) : null;
@@ -50,8 +36,15 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    if (!(await canManageUser(targetUserId, userId))) {
+    if (ctx.role === "VIEWER") {
       return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+    }
+    if (targetUserId !== userId && ctx.role !== "ADMIN") {
+      return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+    }
+    // 対象ユーザーが同じ組織のメンバーであること
+    if (!(await getOrgRole(ctx.orgId, targetUserId))) {
+      return NextResponse.json({ error: "NOT_IN_ORG" }, { status: 400 });
     }
     const dayOff = await prisma.dayOff.upsert({
       where: { userId_date: { userId: targetUserId, date } },

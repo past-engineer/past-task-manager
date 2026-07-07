@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { del } from "@vercel/blob";
 import { prisma } from "@/lib/prisma";
-import { requireUserId, userCanAccessTask } from "@/lib/data";
+import { requireUserId } from "@/lib/data";
+import { getTaskRole, canEdit } from "@/lib/org";
 
 export const runtime = "nodejs";
 
@@ -16,7 +17,7 @@ export async function DELETE(
     if (!attachment) {
       return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
     }
-    if (!(await userCanAccessTask(attachment.taskId, userId))) {
+    if (!canEdit(await getTaskRole(attachment.taskId, userId))) {
       return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
     }
 

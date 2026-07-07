@@ -32,3 +32,6 @@ yarn-error.log*
 
 # prisma
 /prisma/dev.db
+
+# Vercel 環境変数の貼り付け用（コミットしない）
+vercel-env-paste.txt

@@ -3,9 +3,10 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import {
   getCurrentUser,
-  getNonWorkingWeekdays,
+  getWorkspaceSettings,
   userCanAccessProject,
 } from "@/lib/data";
+import { getProjectRole, canEdit as canEditRole } from "@/lib/org";
 import ProjectBoard from "@/components/ProjectBoard";
 import type { TaskLite, MemberLite, MilestoneLite } from "@/lib/types";
 
@@ -22,6 +23,7 @@ export default async function ProjectPage({
   const { id } = await params;
 
   if (!(await userCanAccessProject(id, userId))) notFound();
+  const role = await getProjectRole(id, userId);
 
   const project = await prisma.project.findUnique({
     where: { id },
@@ -49,6 +51,10 @@ export default async function ProjectPage({
     JSON.stringify(project.milestones)
   ) as MilestoneLite[];
 
+  const settings = project.orgId
+    ? await getWorkspaceSettings(project.orgId)
+    : { nonWorkingWeekdays: [0, 6], dailyWorkHours: 8, holidays: [] };
+
   return (
     <div>
       <nav className="mb-4 text-sm text-neutral-400">
@@ -66,7 +72,10 @@ export default async function ProjectPage({
         projectColor={project.color}
         initialTasks={tasks}
         initialMilestones={milestones}
-        nonWorkingWeekdays={await getNonWorkingWeekdays()}
+        nonWorkingWeekdays={settings.nonWorkingWeekdays}
+        orgHolidays={settings.holidays}
+        canEdit={canEditRole(role)}
+        projectThumbnailUrl={project.thumbnailUrl}
         members={members}
         currentUserId={userId}
       />

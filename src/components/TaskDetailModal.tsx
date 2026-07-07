@@ -52,6 +52,7 @@ export default function TaskDetailModal({
   const [settings, setSettings] = useState<{
     nonWorkingWeekdays: number[];
     dailyWorkHours: number;
+    holidays?: string[];
   } | null>(null);
   const [editingHours, setEditingHours] = useState<Record<number, string>>({});
 
@@ -217,6 +218,11 @@ export default function TaskDetailModal({
   const defaultDaily =
     task?.assignee?.dailyCapacity ?? settings?.dailyWorkHours ?? 8;
   const offWeekdays = settings?.nonWorkingWeekdays ?? [0, 6];
+  const holidaySet = new Set(
+    (settings?.holidays ?? [])
+      .map((d) => dayValue(d))
+      .filter((d): d is number => d !== null)
+  );
   const spanS = task ? dayValue(task.startDate) : null;
   const spanE = task
     ? (dayValue(task.endDate) ?? dayValue(task.dueDate))
@@ -224,8 +230,9 @@ export default function TaskDetailModal({
   const workDays: number[] = [];
   if (task && spanS !== null && spanE !== null && spanE >= spanS) {
     for (let d = spanS; d <= spanE && workDays.length < 60; d += DAY_MS) {
-      if (offWeekdays.length >= 7 || !offWeekdays.includes(weekdayOf(d)))
-        workDays.push(d);
+      const weekdayOffed =
+        offWeekdays.length < 7 && offWeekdays.includes(weekdayOf(d));
+      if (!weekdayOffed && !holidaySet.has(d)) workDays.push(d);
     }
   }
   const hoursByDay = new Map<number, number>();

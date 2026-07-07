@@ -2,6 +2,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth, signOut } from "@/auth";
 import Avatar from "@/components/Avatar";
+import OrgSwitcher from "@/components/OrgSwitcher";
+import { getUserOrgs, getCurrentOrg } from "@/lib/org";
 
 export default async function AppLayout({
   children,
@@ -18,19 +20,35 @@ export default async function AppLayout({
     image: session.user.image ?? null,
   };
 
+  const [memberships, currentOrg] = await Promise.all([
+    getUserOrgs(user.id!),
+    getCurrentOrg(user.id!),
+  ]);
+  const orgs = memberships.map((m) => ({
+    id: m.orgId,
+    name: m.org.name,
+    role: m.role,
+    logoUrl: m.org.logoUrl ?? null,
+  }));
+
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-20 border-b border-neutral-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4">
           <div className="flex items-center gap-8">
-            <Link href="/projects" className="flex items-baseline gap-2.5">
-              <span className="text-xl font-bold lowercase tracking-[0.18em] text-neutral-900">
-                past
-              </span>
+            <Link href="/projects" className="flex items-center gap-2.5">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/logo.svg" alt="past" className="h-[18px] w-auto" />
               <span className="text-[10px] uppercase tracking-[0.28em] text-neutral-400">
                 task manager
               </span>
             </Link>
+            {orgs.length > 0 && (
+              <OrgSwitcher
+                orgs={orgs}
+                currentOrgId={currentOrg?.orgId ?? null}
+              />
+            )}
             <nav className="flex items-center gap-5 text-[13px] tracking-wide">
               <Link
                 href="/projects"

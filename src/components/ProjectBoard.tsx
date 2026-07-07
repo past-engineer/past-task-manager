@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useUndo, pickPrev } from "@/lib/useUndo";
 import type { TaskLite, MemberLite, MilestoneLite } from "@/lib/types";
 import type { TaskStatus } from "@prisma/client";
 import KanbanBoard from "@/components/KanbanBoard";
@@ -22,6 +23,9 @@ export default function ProjectBoard({
   initialTasks,
   initialMilestones,
   nonWorkingWeekdays,
+  orgHolidays = [],
+  canEdit = true,
+  projectThumbnailUrl = null,
   members: initialMembers,
   currentUserId,
 }: {
@@ -31,6 +35,9 @@ export default function ProjectBoard({
   projectColor: string;
   initialMilestones: MilestoneLite[];
   nonWorkingWeekdays: number[];
+  orgHolidays?: string[];
+  canEdit?: boolean;
+  projectThumbnailUrl?: string | null;
   initialTasks: TaskLite[];
   members: MemberLite[];
   currentUserId: string;
@@ -58,16 +65,45 @@ export default function ProjectBoard({
     useState<MilestoneLite[]>(initialMilestones);
   const [msModal, setMsModal] = useState<MilestoneLite | "new" | null>(null);
 
-  const patchMilestone = useCallback(async (id: string, dateIso: string) => {
-    setMilestones((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, date: dateIso } : m))
-    );
-    await fetch(`/api/milestones/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ date: dateIso }),
-    });
-  }, []);
+  const pushUndo = useUndo();
+  const tasksRef = useRef(tasks);
+  const milestonesRef = useRef(milestones);
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
+  useEffect(() => {
+    milestonesRef.current = milestones;
+  }, [milestones]);
+
+  // 取り消し用（undo スタックには積まない）
+  const rawPatchMilestone = useCallback(
+    async (id: string, dateIso: string) => {
+      setMilestones((prev) =>
+        prev.map((m) => (m.id === id ? { ...m, date: dateIso } : m))
+      );
+      await fetch(`/api/milestones/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: dateIso }),
+      });
+    },
+    []
+  );
+
+  const patchMilestone = useCallback(
+    async (id: string, dateIso: string) => {
+      const prev = milestonesRef.current.find((m) => m.id === id);
+      if (prev) {
+        const prevDate = prev.date.slice(0, 10);
+        pushUndo(
+          () => rawPatchMilestone(id, prevDate),
+          () => rawPatchMilestone(id, dateIso)
+        );
+      }
+      await rawPatchMilestone(id, dateIso);
+    },
+    [pushUndo, rawPatchMilestone]
+  );
 
   const upsertTask = useCallback((task: TaskLite) => {
     setTasks((prev) => {
@@ -81,7 +117,7 @@ export default function ProjectBoard({
     setTasks((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const patchTask = useCallback(
+  const rawPatchTask = useCallback(
     async (id: string, data: Partial<TaskLite>) => {
       setTasks((prev) =>
         prev.map((t) => (t.id === id ? { ...t, ...data } : t))
@@ -95,9 +131,27 @@ export default function ProjectBoard({
     []
   );
 
-  const reorder = useCallback(
-    async (next: TaskLite[], updates: { id: string; status: TaskStatus; position: number }[]) => {
-      setTasks(next);
+  const patchTask = useCallback(
+    async (id: string, data: Partial<TaskLite>) => {
+      const prev = tasksRef.current.find((t) => t.id === id);
+      if (prev) {
+        const prevData = pickPrev(prev, data);
+        pushUndo(
+          () => rawPatchTask(id, prevData),
+          () => rawPatchTask(id, data)
+        );
+      }
+      await rawPatchTask(id, data);
+    },
+    [pushUndo, rawPatchTask]
+  );
+
+  const rawReorder = useCallback(
+    async (
+      apply: (prev: TaskLite[]) => TaskLite[],
+      updates: { id: string; status: TaskStatus; position: number }[]
+    ) => {
+      setTasks(apply);
       await fetch("/api/tasks/reorder", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -105,6 +159,51 @@ export default function ProjectBoard({
       });
     },
     [projectId]
+  );
+
+  const reorder = useCallback(
+    async (
+      next: TaskLite[],
+      updates: { id: string; status: TaskStatus; position: number }[]
+    ) => {
+      // 逆操作：対象タスクの元の status/position を復元
+      const inverse = updates
+        .map((u) => {
+          const t = tasksRef.current.find((x) => x.id === u.id);
+          return t
+            ? { id: t.id, status: t.status, position: t.position }
+            : null;
+        })
+        .filter((x): x is { id: string; status: TaskStatus; position: number } => !!x);
+      if (inverse.length > 0) {
+        pushUndo(
+          () =>
+            rawReorder(
+              (prev) =>
+                prev.map((t) => {
+                  const inv = inverse.find((i) => i.id === t.id);
+                  return inv
+                    ? { ...t, status: inv.status, position: inv.position }
+                    : t;
+                }),
+              inverse
+            ),
+          () =>
+            rawReorder(
+              (prev) =>
+                prev.map((t) => {
+                  const u = updates.find((i) => i.id === t.id);
+                  return u
+                    ? { ...t, status: u.status, position: u.position }
+                    : t;
+                }),
+              updates
+            )
+        );
+      }
+      await rawReorder(() => next, updates);
+    },
+    [pushUndo, rawReorder]
   );
 
   const deleteTask = useCallback(
@@ -126,18 +225,22 @@ export default function ProjectBoard({
           <h1 className="text-xl font-semibold text-neutral-900">
             {projectName}
           </h1>
-          <ProjectSettingsButton
-            projectId={projectId}
-            name={projectName}
-            description={projectDescription}
-            color={projectColor}
-          />
+          {canEdit && (
+            <ProjectSettingsButton
+              projectId={projectId}
+              name={projectName}
+              description={projectDescription}
+              color={projectColor}
+              thumbnailUrl={projectThumbnailUrl}
+            />
+          )}
         </div>
 
         <div className="flex items-center gap-3">
           <MembersBar
             projectId={projectId}
             members={members}
+            canAdd={canEdit}
             onAdd={(m) => setMembers((prev) => [...prev, m])}
           />
           <div className="flex rounded-lg border border-neutral-200 bg-white p-0.5">
@@ -172,7 +275,7 @@ export default function ProjectBoard({
               ガント
             </button>
           </div>
-          {view === "gantt" && (
+          {canEdit && view === "gantt" && (
             <button
               onClick={() => setMsModal("new")}
               className="rounded-lg border border-violet-300 bg-white px-4 py-2 text-sm font-medium text-violet-600 transition hover:bg-violet-50"
@@ -180,12 +283,14 @@ export default function ProjectBoard({
               + マイルストーン
             </button>
           )}
-          <button
-            onClick={() => setNewTaskStatus("TODO")}
-            className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700"
-          >
-            + 新規タスク
-          </button>
+          {canEdit && (
+            <button
+              onClick={() => setNewTaskStatus("TODO")}
+              className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700"
+            >
+              + 新規タスク
+            </button>
+          )}
         </div>
       </div>
 
@@ -209,6 +314,7 @@ export default function ProjectBoard({
           tasks={tasks}
           milestones={milestones}
           nonWorkingWeekdays={nonWorkingWeekdays}
+          orgHolidays={orgHolidays}
           onOpen={setOpenTaskId}
           onPatch={patchTask}
           onMilestonePatch={patchMilestone}
