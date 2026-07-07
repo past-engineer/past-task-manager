@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #222222;
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  font-family:
+    var(--font-lato),
+    var(--font-noto-sans-jp),
+    "Hiragino Kaku Gothic ProN",
+    "Yu Gothic",
+    Meiryo,
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* dnd-kit のドラッグ中のテキスト選択を抑制 */
+.dnd-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
