@@ -50,6 +50,7 @@ export default function GanttView({
   milestones,
   nonWorkingWeekdays,
   orgHolidays = [],
+  fullyBusyDays = [],
   onOpen,
   onPatch,
   onMilestonePatch,
@@ -59,6 +60,7 @@ export default function GanttView({
   milestones: MilestoneLite[];
   nonWorkingWeekdays: number[];
   orgHolidays?: string[];
+  fullyBusyDays?: string[];
   onOpen: (id: string) => void;
   onPatch: (id: string, data: Partial<TaskLite>) => void;
   onMilestonePatch: (id: string, dateIso: string) => void;
@@ -66,6 +68,11 @@ export default function GanttView({
 }) {
   const holidaySet = new Set(
     orgHolidays.map((d) => dayValue(d)).filter((d): d is number => d !== null)
+  );
+  const busySet = new Set(
+    fullyBusyDays
+      .map((d) => dayValue(d))
+      .filter((d): d is number => d !== null)
   );
   // 全曜日が非稼働なら曜日側は実質無効化（無限スキップ防止）
   const weekOff =
@@ -267,7 +274,7 @@ export default function GanttView({
   return (
     <div>
       <p className="mb-2 text-xs text-neutral-400">
-        バー＝開始日〜終了日（ドラッグで移動、両端で伸縮）。赤いライン＝期限。◆＝マイルストーン（ドラッグで移動、クリックで編集）。日付未設定のタスクは行内をクリックで設定できます。
+        バー＝開始日〜終了日（ドラッグで移動、両端で伸縮）。赤いライン＝期限。◆＝マイルストーン（ドラッグで移動、クリックで編集）。赤の斜線＝全メンバーの予定が埋まっている稼働日。日付未設定のタスクは行内をクリックで設定できます。
       </p>
       <div
         ref={scrollRef}
@@ -352,6 +359,21 @@ export default function GanttView({
                     key={d}
                     className="absolute bottom-0 top-0 bg-neutral-50"
                     style={{ left: i * CELL, width: CELL }}
+                  />
+                ) : null
+              )}
+              {/* 全メンバーの予定が埋まっている稼働日（赤の斜線） */}
+              {range.days.map((d, i) =>
+                busySet.has(d) && !isOff(d) ? (
+                  <div
+                    key={`busy-${d}`}
+                    className="pointer-events-none absolute bottom-0 top-0 z-[3]"
+                    style={{
+                      left: i * CELL,
+                      width: CELL,
+                      backgroundImage:
+                        "repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(239,68,68,0.16) 5px, rgba(239,68,68,0.16) 8px)",
+                    }}
                   />
                 ) : null
               )}

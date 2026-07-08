@@ -89,11 +89,12 @@ model Organization {
   logoUrl  String? @db.Text
   logoPath String? @db.Text
 
-  members  OrganizationMember[]
-  projects Project[]
-  folders  ProjectFolder[]
-  setting  WorkspaceSetting?
-  holidays OrgHoliday[]
+  members   OrganizationMember[]
+  projects  Project[]
+  folders   ProjectFolder[]
+  setting   WorkspaceSetting?
+  holidays  OrgHoliday[]
+  templates ProjectTemplate[]
 
   createdAt DateTime @default(now())
 }
@@ -286,6 +287,51 @@ model DayOff {
 
   @@unique([userId, date])
   @@index([userId])
+}
+
+// プロジェクトテンプレート
+model ProjectTemplate {
+  id          String  @id @default(cuid())
+  orgId       String
+  name        String
+  description String? @db.Text
+  color       String  @default("#4f46e5")
+
+  org        Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  tasks      TemplateTask[]
+  milestones TemplateMilestone[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orgId])
+}
+
+model TemplateTask {
+  id          String @id @default(cuid())
+  templateId  String
+  title       String
+  estimate    Float?
+  // プロジェクト開始日からのオフセット（日）と期間（日）。null なら日付なし
+  startOffset Int?
+  duration    Int?
+  position    Int    @default(0)
+
+  template ProjectTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
+}
+
+model TemplateMilestone {
+  id         String @id @default(cuid())
+  templateId String
+  title      String
+  // プロジェクト開始日からのオフセット（日）
+  offset     Int    @default(0)
+
+  template ProjectTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
 }
 
 // プロジェクトのマイルストーン（テストアップ・公開など）

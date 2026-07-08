@@ -54,6 +54,30 @@ export type ProjectCardData = {
   folderId: string | null;
   archived: boolean;
   _count: { tasks: number; members: number };
+  statusCounts: Record<string, number>;
+};
+
+export type TemplateTaskLite = {
+  id?: string;
+  title: string;
+  estimate: number | null;
+  startOffset: number | null;
+  duration: number | null;
+};
+
+export type TemplateMilestoneLite = {
+  id?: string;
+  title: string;
+  offset: number;
+};
+
+export type TemplateLite = {
+  id: string;
+  name: string;
+  description: string | null;
+  color: string;
+  tasks: TemplateTaskLite[];
+  milestones: TemplateMilestoneLite[];
 };
 
 export type MilestoneLite = {

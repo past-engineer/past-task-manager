@@ -3,7 +3,13 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser, getWorkspaceSettings } from "@/lib/data";
 import { getCurrentOrg } from "@/lib/org";
 import SettingsBoard from "@/components/SettingsBoard";
-import type { DayOffLite, OrgHolidayLite, OrgMemberLite } from "@/lib/types";
+import TemplateManager from "@/components/TemplateManager";
+import type {
+  DayOffLite,
+  OrgHolidayLite,
+  OrgMemberLite,
+  TemplateLite,
+} from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +69,25 @@ export default async function SettingsPage() {
         myRole={org.role}
         initialLogoUrl={orgRecord?.logoUrl ?? null}
       />
+      <div className="mt-8 max-w-3xl">
+        <TemplateManager
+          initialTemplates={
+            JSON.parse(
+              JSON.stringify(
+                await prisma.projectTemplate.findMany({
+                  where: { orgId: org.orgId },
+                  include: {
+                    tasks: { orderBy: { position: "asc" } },
+                    milestones: { orderBy: { offset: "asc" } },
+                  },
+                  orderBy: { createdAt: "asc" },
+                })
+              )
+            ) as TemplateLite[]
+          }
+          canManage={org.role !== "VIEWER"}
+        />
+      </div>
     </div>
   );
 }

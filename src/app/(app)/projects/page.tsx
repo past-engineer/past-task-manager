@@ -36,9 +36,25 @@ export default async function ProjectsPage() {
     }),
   ]);
 
+  // プロジェクトごとのステータス別タスク数
+  const grouped = await prisma.task.groupBy({
+    by: ["projectId", "status"],
+    where: { project: { orgId: org.orgId } },
+    _count: { _all: true },
+  });
+  const countsByProject: Record<string, Record<string, number>> = {};
+  for (const g of grouped) {
+    (countsByProject[g.projectId] ??= {})[g.status] = g._count._all;
+  }
+
   const folders = JSON.parse(JSON.stringify(rawFolders)) as FolderLite[];
   const projects = JSON.parse(
-    JSON.stringify(rawProjects)
+    JSON.stringify(
+      rawProjects.map((p) => ({
+        ...p,
+        statusCounts: countsByProject[p.id] ?? {},
+      }))
+    )
   ) as ProjectCardData[];
 
   return (

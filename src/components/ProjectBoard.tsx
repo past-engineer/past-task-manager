@@ -24,6 +24,7 @@ export default function ProjectBoard({
   initialMilestones,
   nonWorkingWeekdays,
   orgHolidays = [],
+  fullyBusyDays = [],
   canEdit = true,
   projectThumbnailUrl = null,
   members: initialMembers,
@@ -36,6 +37,7 @@ export default function ProjectBoard({
   initialMilestones: MilestoneLite[];
   nonWorkingWeekdays: number[];
   orgHolidays?: string[];
+  fullyBusyDays?: string[];
   canEdit?: boolean;
   projectThumbnailUrl?: string | null;
   initialTasks: TaskLite[];
@@ -315,6 +317,7 @@ export default function ProjectBoard({
           milestones={milestones}
           nonWorkingWeekdays={nonWorkingWeekdays}
           orgHolidays={orgHolidays}
+          fullyBusyDays={fullyBusyDays}
           onOpen={setOpenTaskId}
           onPatch={patchTask}
           onMilestonePatch={patchMilestone}

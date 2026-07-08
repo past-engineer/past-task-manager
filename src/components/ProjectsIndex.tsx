@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { FolderLite, ProjectCardData } from "@/lib/types";
+import { STATUS_ORDER, STATUS_LABELS, STATUS_COLORS } from "@/lib/constants";
 
 const DT_PROJECT = "text/project-id";
 const DT_FOLDER = "text/folder-id";
@@ -265,6 +266,37 @@ export default function ProjectsIndex({
   const dropHighlight = (key: string) =>
     dropTarget === key ? "bg-neutral-100 ring-1 ring-neutral-400" : "";
 
+  // ステータス別タスク数（0件のステータスは省略）
+  function TaskBreakdown({ p }: { p: ProjectCardData }) {
+    if (p._count.tasks === 0) {
+      return <span>タスク 0</span>;
+    }
+    return (
+      <span className="flex items-center gap-2">
+        <span>タスク {p._count.tasks}</span>
+        <span className="flex items-center gap-1.5">
+          {STATUS_ORDER.map((s) => {
+            const n = p.statusCounts?.[s] ?? 0;
+            if (n === 0) return null;
+            return (
+              <span
+                key={s}
+                className="flex items-center gap-0.5"
+                title={STATUS_LABELS[s]}
+              >
+                <span
+                  className="h-2 w-2 rounded-full"
+                  style={{ background: STATUS_COLORS[s] }}
+                />
+                {n}
+              </span>
+            );
+          })}
+        </span>
+      </span>
+    );
+  }
+
   // ---------- パーツ ----------
   function Card({ p }: { p: ProjectCardData }) {
     return (
@@ -304,8 +336,8 @@ export default function ProjectsIndex({
                 {p.description}
               </p>
             )}
-            <div className="flex gap-4 text-xs text-neutral-400">
-              <span>タスク {p._count.tasks}</span>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-400">
+              <TaskBreakdown p={p} />
               <span>メンバー {p._count.members}</span>
             </div>
           </div>
@@ -360,11 +392,36 @@ export default function ProjectsIndex({
                 </button>
               ) : (
                 <button
-                  onClick={() => patchProject(p.id, { archived: true })}
+                  onClick={() =>
+                    patchProject(p.id, { archived: true, folderId: null })
+                  }
                   className="block w-full px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-50"
                 >
                   アーカイブへ移動
                 </button>
+              )}
+              {folders.filter((f) => f.archived).length > 0 && (
+                <>
+                  <p className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-neutral-400">
+                    アーカイブ内のフォルダへ
+                  </p>
+                  {folders
+                    .filter((f) => f.archived && f.id !== p.folderId)
+                    .map((f) => (
+                      <button
+                        key={f.id}
+                        onClick={() =>
+                          patchProject(p.id, {
+                            archived: true,
+                            folderId: f.id,
+                          })
+                        }
+                        className="block w-full truncate px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-50"
+                      >
+                        📦 📁 {f.name}
+                      </button>
+                    ))}
+                </>
               )}
             </div>
           </>
@@ -672,8 +729,8 @@ export default function ProjectsIndex({
               {p.description}
             </span>
           )}
-          <span className="w-16 shrink-0 text-right text-xs text-neutral-400">
-            タスク {p._count.tasks}
+          <span className="shrink-0 text-xs text-neutral-400">
+            <TaskBreakdown p={p} />
           </span>
           <span className="w-20 shrink-0 text-right text-xs text-neutral-400">
             メンバー {p._count.members}
@@ -729,11 +786,36 @@ export default function ProjectsIndex({
                 </button>
               ) : (
                 <button
-                  onClick={() => patchProject(p.id, { archived: true })}
+                  onClick={() =>
+                    patchProject(p.id, { archived: true, folderId: null })
+                  }
                   className="block w-full px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-50"
                 >
                   アーカイブへ移動
                 </button>
+              )}
+              {folders.filter((f) => f.archived).length > 0 && (
+                <>
+                  <p className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-neutral-400">
+                    アーカイブ内のフォルダへ
+                  </p>
+                  {folders
+                    .filter((f) => f.archived && f.id !== p.folderId)
+                    .map((f) => (
+                      <button
+                        key={f.id}
+                        onClick={() =>
+                          patchProject(p.id, {
+                            archived: true,
+                            folderId: f.id,
+                          })
+                        }
+                        className="block w-full truncate px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-50"
+                      >
+                        📦 📁 {f.name}
+                      </button>
+                    ))}
+                </>
               )}
             </div>
           </>

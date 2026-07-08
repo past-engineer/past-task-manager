@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { TemplateLite } from "@/lib/types";
 
 const COLORS = ["#4f46e5", "#0ea5e9", "#10b981", "#f59e0b", "#ec4899", "#ef4444"];
 
@@ -11,7 +12,22 @@ export default function NewProjectButton() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [color, setColor] = useState(COLORS[0]);
+  const [templates, setTemplates] = useState<TemplateLite[] | null>(null);
+  const [templateId, setTemplateId] = useState("");
+  const [startDate, setStartDate] = useState(() =>
+    new Date().toISOString().slice(0, 10)
+  );
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open || templates !== null) return;
+    fetch("/api/templates")
+      .then((r) => r.json())
+      .then((data) => setTemplates(Array.isArray(data) ? data : []))
+      .catch(() => setTemplates([]));
+  }, [open, templates]);
+
+  const selected = templates?.find((t) => t.id === templateId) ?? null;
 
   async function submit() {
     if (!name.trim() || saving) return;
@@ -19,7 +35,13 @@ export default function NewProjectButton() {
     const res = await fetch("/api/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, description, color }),
+      body: JSON.stringify({
+        name,
+        description,
+        color,
+        templateId: templateId || null,
+        startDate: templateId ? startDate || null : null,
+      }),
     });
     setSaving(false);
     if (res.ok) {
@@ -76,6 +98,42 @@ export default function NewProjectButton() {
               rows={3}
               className="mb-4 w-full resize-none rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-400"
             />
+            <label className="mb-1 block text-sm font-medium text-neutral-600">
+              テンプレート
+            </label>
+            <select
+              value={templateId}
+              onChange={(e) => {
+                setTemplateId(e.target.value);
+                const t = templates?.find((x) => x.id === e.target.value);
+                if (t) setColor(t.color);
+              }}
+              className="mb-1 w-full rounded-lg border border-neutral-300 px-2 py-2 text-sm outline-none focus:border-neutral-400"
+            >
+              <option value="">テンプレートなし（空のプロジェクト）</option>
+              {(templates ?? []).map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}（タスク{t.tasks.length}・MS{t.milestones.length}）
+                </option>
+              ))}
+            </select>
+            <p className="mb-3 text-xs text-neutral-400">
+              {selected?.description ??
+                "テンプレートは 設定 > プロジェクトテンプレート で編集できます"}
+            </p>
+            {templateId && (
+              <>
+                <label className="mb-1 block text-sm font-medium text-neutral-600">
+                  開始日（タスク・マイルストーンの基準日）
+                </label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="mb-4 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                />
+              </>
+            )}
             <label className="mb-1 block text-sm font-medium text-neutral-600">
               カラー
             </label>

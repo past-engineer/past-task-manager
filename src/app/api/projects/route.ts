@@ -44,6 +44,59 @@ export async function POST(req: Request) {
         },
       },
     });
+
+    // テンプレートからタスク・マイルストーンを生成
+    if (body.templateId) {
+      const template = await prisma.projectTemplate.findFirst({
+        where: { id: body.templateId.toString(), orgId: ctx.orgId },
+        include: {
+          tasks: { orderBy: { position: "asc" } },
+          milestones: true,
+        },
+      });
+      if (template) {
+        const base = body.startDate ? new Date(body.startDate) : null;
+        const baseMs =
+          base && !isNaN(base.getTime()) ? base.getTime() : null;
+        const DAY = 86_400_000;
+
+        if (template.tasks.length > 0) {
+          await prisma.task.createMany({
+            data: template.tasks.map((t, i) => {
+              const start =
+                baseMs !== null && t.startOffset !== null
+                  ? new Date(baseMs + t.startOffset * DAY)
+                  : null;
+              const end =
+                start && t.duration !== null
+                  ? new Date(
+                      start.getTime() + Math.max(t.duration - 1, 0) * DAY
+                    )
+                  : null;
+              return {
+                projectId: project.id,
+                title: t.title,
+                estimate: t.estimate,
+                status: "TODO" as const,
+                position: i + 1,
+                startDate: start,
+                endDate: end,
+              };
+            }),
+          });
+        }
+        if (baseMs !== null && template.milestones.length > 0) {
+          await prisma.milestone.createMany({
+            data: template.milestones.map((m) => ({
+              projectId: project.id,
+              title: m.title,
+              date: new Date(baseMs + m.offset * DAY),
+            })),
+          });
+        }
+      }
+    }
+
     return NextResponse.json(project, { status: 201 });
   } catch {
     return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });

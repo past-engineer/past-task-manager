@@ -68,6 +68,65 @@ export default async function ProjectPage({
     ? await getWorkspaceSettings(project.orgId)
     : { nonWorkingWeekdays: [0, 6], dailyWorkHours: 8, holidays: [] };
 
+  // 全メンバーの予定が埋まっている日（組織全体の未完了タスク＋個人非稼働日で判定）
+  const fullyBusyDays: string[] = [];
+  if (project.orgId && orgMembers.length > 0) {
+    const memberIds = orgMembers.map((m) => m.userId);
+    const [busyTasks, allDaysOff] = await Promise.all([
+      prisma.task.findMany({
+        where: {
+          project: { orgId: project.orgId, archived: false },
+          assigneeId: { in: memberIds },
+          status: { not: "DONE" },
+        },
+        select: {
+          assigneeId: true,
+          startDate: true,
+          endDate: true,
+          dueDate: true,
+        },
+      }),
+      prisma.dayOff.findMany({
+        where: { userId: { in: memberIds } },
+        select: { userId: true, date: true },
+      }),
+    ]);
+    const DAY = 86_400_000;
+    const toDay = (d: Date | null) =>
+      d ? Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) : null;
+    const busyByUser = new Map<string, Set<number>>(
+      memberIds.map((uid) => [uid, new Set<number>()])
+    );
+    for (const t of busyTasks) {
+      if (!t.assigneeId) continue;
+      const s0 = toDay(t.startDate);
+      const e0 = toDay(t.endDate) ?? toDay(t.dueDate);
+      const s = s0 ?? e0;
+      const e = e0 ?? s0;
+      if (s === null || e === null) continue;
+      const lo = Math.min(s, e);
+      const hi = Math.max(s, e);
+      if ((hi - lo) / DAY > 400) continue; // 異常データ保護
+      const set = busyByUser.get(t.assigneeId);
+      if (!set) continue;
+      for (let d = lo; d <= hi; d += DAY) set.add(d);
+    }
+    for (const off of allDaysOff) {
+      const d = toDay(off.date);
+      const set = busyByUser.get(off.userId);
+      if (d !== null && set) set.add(d);
+    }
+    const sets = [...busyByUser.values()].sort((a, b) => a.size - b.size);
+    const [first, ...rest] = sets;
+    if (first) {
+      for (const d of first) {
+        if (rest.every((s) => s.has(d))) {
+          fullyBusyDays.push(new Date(d).toISOString().slice(0, 10));
+        }
+      }
+    }
+  }
+
   return (
     <div>
       <nav className="mb-4 text-sm text-neutral-400">
@@ -87,6 +146,7 @@ export default async function ProjectPage({
         initialMilestones={milestones}
         nonWorkingWeekdays={settings.nonWorkingWeekdays}
         orgHolidays={settings.holidays}
+        fullyBusyDays={fullyBusyDays}
         canEdit={canEditRole(role)}
         projectThumbnailUrl={project.thumbnailUrl}
         members={members}
