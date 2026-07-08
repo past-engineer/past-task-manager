@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { TaskLite, MilestoneLite } from "@/lib/types";
 import { STATUS_COLORS } from "@/lib/constants";
 import Avatar from "@/components/Avatar";
@@ -110,6 +110,16 @@ export default function GanttView({
 
   const trackW = range.days.length * CELL;
   const today = todayMs();
+
+  // 初期表示は今日の位置へスクロール
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const idx = Math.round((today - range.min) / DAY_MS);
+    if (idx > 0) el.scrollLeft = Math.max(0, idx * CELL - CELL * 2);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const months = useMemo(() => {
     const out: { label: string; count: number }[] = [];
@@ -259,12 +269,15 @@ export default function GanttView({
       <p className="mb-2 text-xs text-neutral-400">
         バー＝開始日〜終了日（ドラッグで移動、両端で伸縮）。赤いライン＝期限。◆＝マイルストーン（ドラッグで移動、クリックで編集）。日付未設定のタスクは行内をクリックで設定できます。
       </p>
-      <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white">
+      <div
+        ref={scrollRef}
+        className="isolate max-h-[calc(100vh-250px)] min-h-[360px] overflow-x-auto overflow-y-auto rounded-xl border border-neutral-200 bg-white"
+      >
         <div style={{ width: LEFT_W + trackW }}>
           {/* header */}
-          <div className="flex border-b border-neutral-200">
+          <div className="sticky top-0 z-50 flex border-b border-neutral-200 bg-white">
             <div
-              className="sticky left-0 z-20 shrink-0 border-r border-neutral-200 bg-white px-3 py-2 text-xs font-medium text-neutral-400"
+              className="sticky left-0 z-40 shrink-0 border-r border-neutral-200 bg-white px-3 py-2 text-xs font-medium text-neutral-400"
               style={{ width: LEFT_W }}
             >
               タスク
@@ -305,7 +318,7 @@ export default function GanttView({
           <div className="flex">
             {/* left labels */}
             <div
-              className="sticky left-0 z-20 shrink-0 border-r border-neutral-200 bg-white"
+              className="sticky left-0 z-40 shrink-0 border-r border-neutral-200 bg-white"
               style={{ width: LEFT_W }}
             >
               {tasks.map((t) => (

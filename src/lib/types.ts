@@ -41,6 +41,7 @@ export type FolderLite = {
   id: string;
   name: string;
   position: number;
+  parentId: string | null;
 };
 
 export type ProjectCardData = {

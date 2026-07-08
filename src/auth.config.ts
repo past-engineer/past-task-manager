@@ -8,7 +8,13 @@ export const authConfig = {
   pages: {
     signIn: "/login",
   },
-  providers: [Google],
+  providers: [
+    Google({
+      // 事前作成したユーザー（メールのみ登録）に、初回 Google ログインで
+      // アカウントを自動リンクする。Google はメール検証済みのため安全。
+      allowDangerousEmailAccountLinking: true,
+    }),
+  ],
   callbacks: {
     async jwt({ token, user }) {
       if (user) token.id = user.id;

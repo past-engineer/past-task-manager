@@ -168,20 +168,25 @@ model Project {
   @@index([orgId])
 }
 
-// プロジェクトのフォルダ（組織内で共有）
+// プロジェクトのフォルダ（組織内で共有、ネスト可）
 model ProjectFolder {
   id       String  @id @default(cuid())
   name     String
   position Int     @default(0)
   // 所属組織（移行前の既存行は null の場合あり）
   orgId    String?
+  // 親フォルダ（null = 最上位）
+  parentId String?
 
-  org      Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  org      Organization?  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  parent   ProjectFolder? @relation("FolderNest", fields: [parentId], references: [id], onDelete: SetNull)
+  children ProjectFolder[] @relation("FolderNest")
   projects Project[]
 
   createdAt DateTime @default(now())
 
   @@index([orgId])
+  @@index([parentId])
 }
 
 model ProjectMember {

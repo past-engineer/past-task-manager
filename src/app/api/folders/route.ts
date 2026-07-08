@@ -29,16 +29,32 @@ export async function POST(req: Request) {
     if (!name) {
       return NextResponse.json({ error: "NAME_REQUIRED" }, { status: 400 });
     }
+    let parentId: string | null = null;
+    if (body.parentId) {
+      const parent = await prisma.projectFolder.findFirst({
+        where: { id: body.parentId.toString(), orgId: ctx.orgId },
+      });
+      if (!parent) {
+        return NextResponse.json({ error: "BAD_PARENT" }, { status: 400 });
+      }
+      parentId = parent.id;
+    }
     const last = await prisma.projectFolder.findFirst({
       where: { orgId: ctx.orgId },
       orderBy: { position: "desc" },
       select: { position: true },
     });
     const folder = await prisma.projectFolder.create({
-      data: { name, orgId: ctx.orgId, position: (last?.position ?? 0) + 1 },
+      data: {
+        name,
+        orgId: ctx.orgId,
+        parentId,
+        position: (last?.position ?? 0) + 1,
+      },
     });
     return NextResponse.json(folder, { status: 201 });
-  } catch {
+  } catch (e) {
+    console.error("[folders POST]", e);
     return NextResponse.json({ error: "ERROR" }, { status: 400 });
   }
 }

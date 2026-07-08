@@ -109,6 +109,16 @@ export default function AllProjectsGantt({
   const dragRef = useRef<DragState | null>(null);
   const [msDrag, setMsDrag] = useState<MsDrag | null>(null);
   const msDragRef = useRef<MsDrag | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  function toggleProject(id: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   const range = useMemo(
     () =>
@@ -124,6 +134,16 @@ export default function AllProjectsGantt({
   );
   const trackW = range.days.length * CELL;
   const today = todayMs();
+
+  // 初期表示は今日の位置へスクロール
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const idx = Math.round((today - range.min) / DAY_MS);
+    if (idx > 0) el.scrollLeft = Math.max(0, idx * CELL - CELL * 2);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const months = useMemo(() => {
     const out: { label: string; count: number }[] = [];
@@ -142,6 +162,7 @@ export default function AllProjectsGantt({
     for (const p of projects) {
       out.push({ kind: "project", project: p, top, height: PROJECT_H });
       top += PROJECT_H;
+      if (collapsed.has(p.id)) continue;
       for (const t of tasks) {
         if (t.projectId !== p.id) continue;
         out.push({ kind: "task", task: t, top, height: ROW_H });
@@ -149,7 +170,7 @@ export default function AllProjectsGantt({
       }
     }
     return out;
-  }, [projects, tasks]);
+  }, [projects, tasks, collapsed]);
 
   const totalH = rows.reduce((s, r) => s + r.height, 0);
 
@@ -174,22 +195,30 @@ export default function AllProjectsGantt({
   }, [rows]);
 
   // プロジェクトごとの期間サマリー（見出し行に薄く表示）
+  // タスクの期間に加えて、期限・マイルストーンの日付も範囲に含める
   const projectSpans = useMemo(() => {
     const map = new Map<string, { min: number; max: number }>();
-    for (const t of tasks) {
-      const s0 = dayValue(t.startDate);
-      const e0 = dayValue(t.endDate) ?? dayValue(t.dueDate);
-      const lo = s0 ?? e0;
-      const hi = e0 ?? s0;
-      if (lo === null || hi === null) continue;
-      const cur = map.get(t.projectId);
-      map.set(t.projectId, {
+    const extend = (projectId: string, lo: number | null, hi: number | null) => {
+      if (lo === null || hi === null) return;
+      const cur = map.get(projectId);
+      map.set(projectId, {
         min: cur ? Math.min(cur.min, lo) : lo,
         max: cur ? Math.max(cur.max, hi) : hi,
       });
+    };
+    for (const t of tasks) {
+      const s0 = dayValue(t.startDate);
+      const e0 = dayValue(t.endDate) ?? dayValue(t.dueDate);
+      extend(t.projectId, s0 ?? e0, e0 ?? s0);
+      const due = dayValue(t.dueDate);
+      extend(t.projectId, due, due);
+    }
+    for (const m of milestones) {
+      const d = dayValue(m.date);
+      extend(m.projectId, d, d);
     }
     return map;
-  }, [tasks]);
+  }, [tasks, milestones]);
 
   const pushUndo = useUndo();
   const tasksStateRef = useRef(tasks);
@@ -388,15 +417,34 @@ export default function AllProjectsGantt({
 
   return (
     <div>
-      <p className="mb-2 text-xs text-neutral-400">
-        バー＝開始日〜終了日（ドラッグで移動、両端で伸縮）。赤いライン＝期限。◆＝マイルストーン（ドラッグで移動、クリックで編集。追加は各プロジェクトのガント画面から）。日付未設定のタスクは行内をクリックで設定できます。
-      </p>
-      <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white">
+      <div className="mb-2 flex items-end justify-between gap-4">
+        <p className="text-xs text-neutral-400">
+          バー＝開始日〜終了日（ドラッグで移動、両端で伸縮）。赤いライン＝期限。◆＝マイルストーン（ドラッグで移動、クリックで編集。追加は各プロジェクトのガント画面から）。日付未設定のタスクは行内をクリックで設定できます。
+        </p>
+        <div className="flex shrink-0 gap-1.5">
+          <button
+            onClick={() => setCollapsed(new Set(projects.map((p) => p.id)))}
+            className="rounded-md border border-neutral-200 px-2.5 py-1 text-xs text-neutral-600 transition hover:border-neutral-400"
+          >
+            すべて折りたたむ
+          </button>
+          <button
+            onClick={() => setCollapsed(new Set())}
+            className="rounded-md border border-neutral-200 px-2.5 py-1 text-xs text-neutral-600 transition hover:border-neutral-400"
+          >
+            すべて展開
+          </button>
+        </div>
+      </div>
+      <div
+        ref={scrollRef}
+        className="isolate max-h-[calc(100vh-250px)] min-h-[360px] overflow-x-auto overflow-y-auto rounded-xl border border-neutral-200 bg-white"
+      >
         <div style={{ width: LEFT_W + trackW }}>
           {/* header */}
-          <div className="flex border-b border-neutral-200">
+          <div className="sticky top-0 z-50 flex border-b border-neutral-200 bg-white">
             <div
-              className="sticky left-0 z-20 shrink-0 border-r border-neutral-200 bg-white px-3 py-2 text-xs font-medium text-neutral-400"
+              className="sticky left-0 z-40 shrink-0 border-r border-neutral-200 bg-white px-3 py-2 text-xs font-medium text-neutral-400"
               style={{ width: LEFT_W }}
             >
               プロジェクト / タスク
@@ -437,16 +485,27 @@ export default function AllProjectsGantt({
           <div className="flex">
             {/* left labels */}
             <div
-              className="sticky left-0 z-20 shrink-0 border-r border-neutral-200 bg-white"
+              className="sticky left-0 z-40 shrink-0 border-r border-neutral-200 bg-white"
               style={{ width: LEFT_W }}
             >
               {rows.map((row) =>
                 row.kind === "project" ? (
-                  <div
+                  <button
                     key={`p-${row.project.id}`}
-                    className="flex items-center gap-2 border-b border-neutral-200 bg-neutral-50 px-3"
+                    onClick={() => toggleProject(row.project.id)}
+                    className="flex w-full items-center gap-2 border-b border-neutral-200 bg-neutral-50 px-3 text-left hover:bg-neutral-100"
                     style={{ height: row.height }}
+                    title={
+                      collapsed.has(row.project.id) ? "展開" : "折りたたむ"
+                    }
                   >
+                    <span
+                      className={`inline-block text-[10px] text-neutral-400 transition-transform ${
+                        collapsed.has(row.project.id) ? "" : "rotate-90"
+                      }`}
+                    >
+                      ▶
+                    </span>
                     <span
                       className="h-3 w-3 shrink-0 rounded-full"
                       style={{ background: row.project.color }}
@@ -454,7 +513,12 @@ export default function AllProjectsGantt({
                     <span className="truncate text-sm font-semibold text-neutral-800">
                       {row.project.name}
                     </span>
-                  </div>
+                    {collapsed.has(row.project.id) && (
+                      <span className="ml-auto shrink-0 text-xs text-neutral-400">
+                        {tasks.filter((t) => t.projectId === row.project.id).length}
+                      </span>
+                    )}
+                  </button>
                 ) : (
                   <div
                     key={row.task.id}
