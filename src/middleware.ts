@@ -13,7 +13,9 @@ export default auth((req) => {
     pathname === "/login" ||
     pathname.startsWith("/api/auth") ||
     pathname.startsWith("/_next") ||
-    pathname.startsWith("/favicon");
+    pathname.startsWith("/favicon") ||
+    // public/ 配下の静的ファイル（ロゴ画像など、拡張子付きパス）
+    /\.(svg|png|jpg|jpeg|gif|ico|webp|txt|xml)$/.test(pathname);
 
   if (!isLoggedIn && !isPublic) {
     return NextResponse.redirect(new URL("/login", req.nextUrl.origin));
