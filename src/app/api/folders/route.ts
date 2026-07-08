@@ -30,6 +30,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "NAME_REQUIRED" }, { status: 400 });
     }
     let parentId: string | null = null;
+    let archived = !!body.archived;
     if (body.parentId) {
       const parent = await prisma.projectFolder.findFirst({
         where: { id: body.parentId.toString(), orgId: ctx.orgId },
@@ -38,6 +39,8 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "BAD_PARENT" }, { status: 400 });
       }
       parentId = parent.id;
+      // アーカイブ済みフォルダの中に作る場合は自身もアーカイブ扱い
+      if (parent.archived) archived = true;
     }
     const last = await prisma.projectFolder.findFirst({
       where: { orgId: ctx.orgId },
@@ -49,6 +52,7 @@ export async function POST(req: Request) {
         name,
         orgId: ctx.orgId,
         parentId,
+        archived,
         position: (last?.position ?? 0) + 1,
       },
     });

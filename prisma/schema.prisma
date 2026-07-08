@@ -177,6 +177,8 @@ model ProjectFolder {
   orgId    String?
   // 親フォルダ（null = 最上位）
   parentId String?
+  // フォルダごとアーカイブ
+  archived Boolean @default(false)
 
   org      Organization?  @relation(fields: [orgId], references: [id], onDelete: Cascade)
   parent   ProjectFolder? @relation("FolderNest", fields: [parentId], references: [id], onDelete: SetNull)

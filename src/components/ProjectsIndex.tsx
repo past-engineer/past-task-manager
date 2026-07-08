@@ -26,7 +26,11 @@ export default function ProjectsIndex({
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [view, setViewState] = useState<ViewMode>("tree");
   const [currentId, setCurrentId] = useState<string | null>(null);
+  const [archiveCurrentId, setArchiveCurrentId] = useState<string | null>(
+    null
+  );
   const [busy, setBusy] = useState(0);
+  const [query, setQuery] = useState("");
   const [navigating, setNavigating] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -53,10 +57,29 @@ export default function ProjectsIndex({
 
   const active = projects.filter((p) => !p.archived);
   const archived = projects.filter((p) => p.archived);
+  const activeFolders = folders.filter((f) => !f.archived);
   const childrenOf = (parentId: string | null) =>
-    folders.filter((f) => (f.parentId ?? null) === parentId);
+    activeFolders.filter((f) => (f.parentId ?? null) === parentId);
   const projectsIn = (folderId: string | null) =>
     active.filter((p) => p.folderId === folderId);
+  // アーカイブ側
+  const archivedFolderRoots = folders.filter(
+    (f) =>
+      f.archived &&
+      (!f.parentId || !folders.find((x) => x.id === f.parentId)?.archived)
+  );
+  const archivedChildrenOf = (parentId: string) =>
+    folders.filter((f) => f.archived && f.parentId === parentId);
+  const looseArchived = archived.filter(
+    (p) => !p.folderId || !folders.find((f) => f.id === p.folderId)?.archived
+  );
+  // アーカイブ内ナビ（アイコン/リスト表示用）
+  const archivedKidsOf = (parentId: string | null) =>
+    parentId === null ? archivedFolderRoots : archivedChildrenOf(parentId);
+  const archivedProjectsIn = (folderId: string | null) =>
+    folderId === null
+      ? looseArchived
+      : archived.filter((p) => p.folderId === folderId);
 
   async function patchProject(
     id: string,
@@ -127,6 +150,56 @@ export default function ProjectsIndex({
     });
   }
 
+  async function archiveFolder(f: FolderLite) {
+    if (!confirm(`フォルダ「${f.name}」を中身ごとアーカイブしますか？`))
+      return;
+    await withBusy(async () => {
+      let res = await fetch(`/api/folders/${f.id}/archive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (res.status === 409) {
+        if (
+          !confirm(
+            `アーカイブに同名のフォルダ「${f.name}」があります。中身を統合してもいいですか？`
+          )
+        )
+          return;
+        res = await fetch(`/api/folders/${f.id}/archive`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ merge: true }),
+        });
+      }
+      if (!res.ok) alert("アーカイブに失敗しました");
+    });
+  }
+
+  async function createArchivedFolder(parentId: string | null) {
+    const name = prompt("アーカイブ内に作成するフォルダ名");
+    if (!name?.trim()) return;
+    await withBusy(async () => {
+      const res = await fetch("/api/folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), parentId, archived: true }),
+      });
+      if (!res.ok) alert("フォルダの作成に失敗しました");
+    });
+  }
+
+  async function restoreFolder(f: FolderLite) {
+    await withBusy(async () => {
+      const res = await fetch(`/api/folders/${f.id}/archive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ restore: true }),
+      });
+      if (!res.ok) alert("復元に失敗しました");
+    });
+  }
+
   async function deleteFolder(f: FolderLite) {
     if (
       !confirm(
@@ -157,7 +230,9 @@ export default function ProjectsIndex({
 
   function drop(
     e: React.DragEvent,
-    target: { folderId: string | null } | { archive: true }
+    target:
+      | { folderId: string | null; toArchived?: boolean }
+      | { archive: true }
   ) {
     if (!canEdit) return;
     e.preventDefault();
@@ -169,10 +244,21 @@ export default function ProjectsIndex({
       if ("archive" in target) {
         patchProject(projectId, { archived: true });
       } else {
-        patchProject(projectId, { folderId: target.folderId, archived: false });
+        patchProject(projectId, {
+          folderId: target.folderId,
+          archived: target.toArchived ?? false,
+        });
       }
-    } else if (folderId && !("archive" in target)) {
-      moveFolder(folderId, target.folderId);
+    } else if (folderId) {
+      const f = folders.find((x) => x.id === folderId);
+      if ("archive" in target) {
+        if (f) archiveFolder(f);
+      } else if (!("toArchived" in target) || !target.toArchived) {
+        moveFolder(folderId, target.folderId);
+      } else if (f?.archived) {
+        // アーカイブ内でのフォルダ移動
+        moveFolder(folderId, target.folderId);
+      }
     }
   }
 
@@ -253,7 +339,7 @@ export default function ProjectsIndex({
                   未分類に戻す
                 </button>
               )}
-              {folders
+              {activeFolders
                 .filter((f) => f.id !== p.folderId)
                 .map((f) => (
                   <button
@@ -308,7 +394,12 @@ export default function ProjectsIndex({
     const kids = childrenOf(f.id);
     return (
       <section
-        className={depth > 0 ? "ml-5 border-l border-neutral-100 pl-4" : ""}
+        onDragOver={(e) => dragOver(e, `folder:${f.id}`)}
+        onDragLeave={() => setDropTarget(null)}
+        onDrop={(e) => drop(e, { folderId: f.id })}
+        className={`rounded-lg transition ${
+          depth > 0 ? "ml-5 border-l border-neutral-100 pl-4" : ""
+        } ${dropHighlight(`folder:${f.id}`)}`}
       >
         <div
           draggable={canEdit}
@@ -317,12 +408,9 @@ export default function ProjectsIndex({
             e.dataTransfer.effectAllowed = "move";
             e.stopPropagation();
           }}
-          onDragOver={(e) => dragOver(e, `folder:${f.id}`)}
-          onDragLeave={() => setDropTarget(null)}
-          onDrop={(e) => drop(e, { folderId: f.id })}
-          className={`mb-3 flex items-center gap-2 rounded-md px-1.5 py-1 transition ${
+          className={`mb-3 flex items-center gap-2 rounded-md px-1.5 py-1 ${
             canEdit ? "cursor-grab" : ""
-          } ${dropHighlight(`folder:${f.id}`)}`}
+          }`}
         >
           <h2 className="text-sm font-semibold tracking-wide text-neutral-700">
             📁 {f.name}
@@ -336,6 +424,13 @@ export default function ProjectsIndex({
                 title="名前を変更"
               >
                 ✎
+              </button>
+              <button
+                onClick={() => archiveFolder(f)}
+                className="text-xs text-neutral-300 hover:text-neutral-600"
+                title="フォルダごとアーカイブ"
+              >
+                📦
               </button>
               <button
                 onClick={() => deleteFolder(f)}
@@ -352,6 +447,73 @@ export default function ProjectsIndex({
           <div className="mt-4 space-y-6">
             {kids.map((k) => (
               <FolderSection key={k.id} f={k} depth={depth + 1} />
+            ))}
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  function ArchivedFolderSection({
+    f,
+    depth,
+  }: {
+    f: FolderLite;
+    depth: number;
+  }) {
+    const list = archived.filter((p) => p.folderId === f.id);
+    const kids = archivedChildrenOf(f.id);
+    return (
+      <section
+        onDragOver={(e) => dragOver(e, `folder:${f.id}`)}
+        onDragLeave={() => setDropTarget(null)}
+        onDrop={(e) => drop(e, { folderId: f.id, toArchived: true })}
+        className={`rounded-lg transition ${
+          depth > 0 ? "ml-5 border-l border-neutral-100 pl-4" : ""
+        } ${dropHighlight(`folder:${f.id}`)}`}
+      >
+        <div className="mb-3 flex items-center gap-2 rounded-md px-1.5 py-1">
+          <h3 className="text-sm font-semibold tracking-wide text-neutral-500">
+            📁 {f.name}
+          </h3>
+          <span className="text-xs text-neutral-400">{list.length}</span>
+          {canEdit && (
+            <>
+              <button
+                onClick={() => restoreFolder(f)}
+                className="rounded-md border border-neutral-200 px-2 py-0.5 text-xs text-neutral-500 transition hover:border-neutral-400"
+              >
+                復元
+              </button>
+              <button
+                onClick={() => renameFolder(f)}
+                className="text-xs text-neutral-300 hover:text-neutral-600"
+                title="名前を変更"
+              >
+                ✎
+              </button>
+              <button
+                onClick={() => createArchivedFolder(f.id)}
+                className="text-xs text-neutral-300 hover:text-neutral-600"
+                title="サブフォルダを作成"
+              >
+                ＋
+              </button>
+              <button
+                onClick={() => deleteFolder(f)}
+                className="text-xs text-neutral-300 hover:text-red-500"
+                title="フォルダを削除"
+              >
+                ✕
+              </button>
+            </>
+          )}
+        </div>
+        <Grid list={list} />
+        {kids.length > 0 && (
+          <div className="mt-4 space-y-6">
+            {kids.map((k) => (
+              <ArchivedFolderSection key={k.id} f={k} depth={depth + 1} />
             ))}
           </div>
         )}
@@ -394,6 +556,16 @@ export default function ProjectsIndex({
               title="名前を変更"
             >
               ✎
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                archiveFolder(f);
+              }}
+              className="text-xs text-neutral-300 hover:text-neutral-600"
+              title="フォルダごとアーカイブ"
+            >
+              📦
             </button>
             <button
               onClick={(e) => {
@@ -445,6 +617,16 @@ export default function ProjectsIndex({
               title="名前を変更"
             >
               ✎
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                archiveFolder(f);
+              }}
+              className="text-xs text-neutral-300 hover:text-neutral-600"
+              title="フォルダごとアーカイブ"
+            >
+              📦
             </button>
             <button
               onClick={(e) => {
@@ -526,7 +708,7 @@ export default function ProjectsIndex({
                   未分類に戻す
                 </button>
               )}
-              {folders
+              {activeFolders
                 .filter((f) => f.id !== p.folderId)
                 .map((f) => (
                   <button
@@ -538,12 +720,21 @@ export default function ProjectsIndex({
                   </button>
                 ))}
               <div className="my-1 border-t border-neutral-100" />
-              <button
-                onClick={() => patchProject(p.id, { archived: true })}
-                className="block w-full px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-50"
-              >
-                アーカイブへ移動
-              </button>
+              {p.archived ? (
+                <button
+                  onClick={() => patchProject(p.id, { archived: false })}
+                  className="block w-full px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-50"
+                >
+                  アーカイブから戻す
+                </button>
+              ) : (
+                <button
+                  onClick={() => patchProject(p.id, { archived: true })}
+                  className="block w-full px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-50"
+                >
+                  アーカイブへ移動
+                </button>
+              )}
             </div>
           </>
         )}
@@ -551,8 +742,149 @@ export default function ProjectsIndex({
     );
   }
 
+  function ArchFolderTile({ f }: { f: FolderLite }) {
+    const count =
+      archivedProjectsIn(f.id).length + archivedChildrenOf(f.id).length;
+    return (
+      <div
+        draggable={canEdit}
+        onDragStart={(e) => {
+          e.dataTransfer.setData(DT_FOLDER, f.id);
+          e.dataTransfer.effectAllowed = "move";
+          e.stopPropagation();
+        }}
+        onDragOver={(e) => dragOver(e, `folder:${f.id}`)}
+        onDragLeave={() => setDropTarget(null)}
+        onDrop={(e) => drop(e, { folderId: f.id, toArchived: true })}
+        onClick={() => setArchiveCurrentId(f.id)}
+        className={`group flex cursor-pointer flex-col items-center gap-0.5 rounded-lg border border-transparent p-3 text-center transition hover:bg-neutral-50 ${dropHighlight(
+          `folder:${f.id}`
+        )}`}
+        title={f.name}
+      >
+        <span className="text-4xl leading-none">📁</span>
+        <span className="w-full truncate text-sm text-neutral-700">
+          {f.name}
+        </span>
+        <span className="text-[11px] text-neutral-400">{count}件</span>
+        {canEdit && (
+          <span className="invisible flex items-center gap-2 group-hover:visible">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                restoreFolder(f);
+              }}
+              className="text-[11px] text-neutral-400 hover:text-neutral-700"
+            >
+              復元
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                renameFolder(f);
+              }}
+              className="text-xs text-neutral-300 hover:text-neutral-600"
+              title="名前を変更"
+            >
+              ✎
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                deleteFolder(f);
+              }}
+              className="text-xs text-neutral-300 hover:text-red-500"
+              title="フォルダを削除"
+            >
+              ✕
+            </button>
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  function ArchFolderRow({ f }: { f: FolderLite }) {
+    const count =
+      archivedProjectsIn(f.id).length + archivedChildrenOf(f.id).length;
+    return (
+      <div
+        draggable={canEdit}
+        onDragStart={(e) => {
+          e.dataTransfer.setData(DT_FOLDER, f.id);
+          e.dataTransfer.effectAllowed = "move";
+          e.stopPropagation();
+        }}
+        onDragOver={(e) => dragOver(e, `folder:${f.id}`)}
+        onDragLeave={() => setDropTarget(null)}
+        onDrop={(e) => drop(e, { folderId: f.id, toArchived: true })}
+        onClick={() => setArchiveCurrentId(f.id)}
+        className={`flex cursor-pointer items-center gap-3 px-4 py-2.5 transition hover:bg-neutral-50 ${dropHighlight(
+          `folder:${f.id}`
+        )}`}
+      >
+        <span className="text-lg leading-none">📁</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-neutral-800">
+          {f.name}
+        </span>
+        <span className="shrink-0 text-xs text-neutral-400">{count}件</span>
+        {canEdit && (
+          <>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                restoreFolder(f);
+              }}
+              className="text-xs text-neutral-400 hover:text-neutral-700"
+            >
+              復元
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                renameFolder(f);
+              }}
+              className="text-xs text-neutral-300 hover:text-neutral-600"
+              title="名前を変更"
+            >
+              ✎
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                deleteFolder(f);
+              }}
+              className="text-xs text-neutral-300 hover:text-red-500"
+              title="フォルダを削除"
+            >
+              ✕
+            </button>
+          </>
+        )}
+        <span className="text-neutral-300">›</span>
+      </div>
+    );
+  }
+
   const rootFolders = childrenOf(null);
   const unfiled = projectsIn(null);
+
+  // アーカイブ内の現在フォルダ（アイコン/リスト表示用）
+  const effArchId = folders.some(
+    (f) => f.id === archiveCurrentId && f.archived
+  )
+    ? archiveCurrentId
+    : null;
+  const archCrumbs: FolderLite[] = [];
+  {
+    let c = effArchId;
+    while (c) {
+      const f = folders.find((x) => x.id === c);
+      if (!f) break;
+      archCrumbs.unshift(f);
+      c = f.parentId;
+    }
+  }
 
   // アイコンビューの現在フォルダ（削除済みなら最上位へ）
   const effectiveId = folders.some((f) => f.id === currentId)
@@ -571,6 +903,13 @@ export default function ProjectsIndex({
 
   const showLoading = busy > 0 || isPending || navigating;
 
+  // 名前検索（フォルダ横断）
+  const q = query.trim().toLowerCase();
+  const searchActive = active.filter((p) => p.name.toLowerCase().includes(q));
+  const searchArchived = archived.filter((p) =>
+    p.name.toLowerCase().includes(q)
+  );
+
   return (
     <div className="space-y-8">
       {/* ローディング表示（変更の反映中／ページ遷移中） */}
@@ -586,6 +925,13 @@ export default function ProjectsIndex({
       {/* toolbar */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="プロジェクトを検索"
+            className="w-48 rounded-md border border-neutral-200 px-2.5 py-1.5 text-sm outline-none focus:border-neutral-400"
+          />
           <div className="flex rounded-lg border border-neutral-200 bg-white p-0.5">
             <button
               onClick={() => setView("tree")}
@@ -665,7 +1011,27 @@ export default function ProjectsIndex({
           ))}
       </div>
 
-      {view === "tree" ? (
+      {q ? (
+        /* 検索結果（フォルダ横断） */
+        <section>
+          <p className="mb-3 text-sm text-neutral-500">
+            「{query.trim()}」の検索結果 {searchActive.length}
+            {searchArchived.length > 0 && `＋アーカイブ ${searchArchived.length}`}
+            件
+          </p>
+          <Grid list={searchActive} />
+          {searchArchived.length > 0 && (
+            <div className="mt-6">
+              <p className="mb-3 text-sm font-semibold tracking-wide text-neutral-400">
+                アーカイブ
+              </p>
+              <div className="opacity-70">
+                <Grid list={searchArchived} />
+              </div>
+            </div>
+          )}
+        </section>
+      ) : view === "tree" ? (
         <>
           {/* folders (tree) */}
           {rootFolders.map((f) => (
@@ -674,7 +1040,7 @@ export default function ProjectsIndex({
 
           {/* 未分類 */}
           <section>
-            {folders.length > 0 && (
+            {activeFolders.length > 0 && (
               <div
                 onDragOver={(e) => dragOver(e, "root")}
                 onDragLeave={() => setDropTarget(null)}
@@ -765,7 +1131,10 @@ export default function ProjectsIndex({
       )}
 
       {/* アーカイブ */}
-      {(archived.length > 0 || dropTarget === "archive") && (
+      {!q &&
+        (archived.length > 0 ||
+          archivedFolderRoots.length > 0 ||
+          dropTarget === "archive") && (
         <details className="group">
           <summary
             onDragOver={(e) => dragOver(e, "archive")}
@@ -777,14 +1146,109 @@ export default function ProjectsIndex({
               <span className="inline-block transition group-open:rotate-90">
                 ▸
               </span>{" "}
-              アーカイブ（{archived.length}）
+              アーカイブ（
+              {archivedFolderRoots.length > 0 &&
+                `フォルダ ${archivedFolderRoots.length}・`}
+              {archived.length}件）
             </span>
             <span className="ml-2 text-xs text-neutral-400">
               スケジュール系ビューには表示されません
             </span>
           </summary>
-          <div className="opacity-70">
-            <Grid list={archived} />
+          <div className="space-y-6 opacity-80">
+            {view === "tree" ? (
+              <>
+                {canEdit && (
+                  <button
+                    onClick={() => createArchivedFolder(null)}
+                    className="rounded-md border border-neutral-200 px-3 py-1.5 text-xs text-neutral-500 transition hover:border-neutral-400"
+                  >
+                    + アーカイブ内にフォルダ
+                  </button>
+                )}
+                {archivedFolderRoots.map((f) => (
+                  <ArchivedFolderSection key={f.id} f={f} depth={0} />
+                ))}
+                {looseArchived.length > 0 && <Grid list={looseArchived} />}
+              </>
+            ) : (
+              <>
+                {/* アーカイブ内パンくず */}
+                <div className="flex flex-wrap items-center gap-1 text-sm">
+                  <button
+                    onClick={() => setArchiveCurrentId(null)}
+                    onDragOver={(e) => dragOver(e, "arch-root")}
+                    onDragLeave={() => setDropTarget(null)}
+                    onDrop={(e) =>
+                      drop(e, { folderId: null, toArchived: true })
+                    }
+                    className={`rounded-md px-1.5 py-0.5 transition ${
+                      effArchId === null
+                        ? "font-semibold text-neutral-700"
+                        : "text-neutral-500 hover:text-neutral-900"
+                    } ${dropHighlight("arch-root")}`}
+                  >
+                    アーカイブ
+                  </button>
+                  {archCrumbs.map((f) => (
+                    <span key={f.id} className="flex items-center gap-1">
+                      <span className="text-neutral-300">/</span>
+                      <button
+                        onClick={() => setArchiveCurrentId(f.id)}
+                        onDragOver={(e) => dragOver(e, `crumb:${f.id}`)}
+                        onDragLeave={() => setDropTarget(null)}
+                        onDrop={(e) =>
+                          drop(e, { folderId: f.id, toArchived: true })
+                        }
+                        className={`rounded-md px-1.5 py-0.5 transition ${
+                          f.id === effArchId
+                            ? "font-semibold text-neutral-700"
+                            : "text-neutral-500 hover:text-neutral-900"
+                        } ${dropHighlight(`crumb:${f.id}`)}`}
+                      >
+                        📁 {f.name}
+                      </button>
+                    </span>
+                  ))}
+                  {canEdit && (
+                    <button
+                      onClick={() => createArchivedFolder(effArchId)}
+                      className="ml-auto rounded-md border border-neutral-200 px-2.5 py-1 text-xs text-neutral-500 transition hover:border-neutral-400"
+                    >
+                      + フォルダ
+                    </button>
+                  )}
+                </div>
+
+                {view === "icons" ? (
+                  <>
+                    {archivedKidsOf(effArchId).length > 0 && (
+                      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+                        {archivedKidsOf(effArchId).map((f) => (
+                          <ArchFolderTile key={f.id} f={f} />
+                        ))}
+                      </div>
+                    )}
+                    <Grid list={archivedProjectsIn(effArchId)} />
+                  </>
+                ) : (
+                  <div className="divide-y divide-neutral-100 rounded-lg border border-neutral-200 bg-white">
+                    {archivedKidsOf(effArchId).length === 0 &&
+                      archivedProjectsIn(effArchId).length === 0 && (
+                        <p className="p-4 text-sm text-neutral-400">
+                          プロジェクトがありません
+                        </p>
+                      )}
+                    {archivedKidsOf(effArchId).map((f) => (
+                      <ArchFolderRow key={f.id} f={f} />
+                    ))}
+                    {archivedProjectsIn(effArchId).map((p) => (
+                      <ProjectRow key={p.id} p={p} />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </details>
       )}
