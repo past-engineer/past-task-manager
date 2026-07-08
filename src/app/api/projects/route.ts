@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUserId } from "@/lib/data";
 import { requireOrgContext } from "@/lib/org";
+import { logActivity } from "@/lib/audit";
 
 export async function GET() {
   try {
@@ -42,6 +43,21 @@ export async function POST(req: Request) {
         members: {
           create: { userId, role: "OWNER" },
         },
+      },
+    });
+
+    await logActivity({
+      orgId: ctx.orgId,
+      actorId: userId,
+      entity: "project",
+      entityId: project.id,
+      action: "create",
+      summary: `プロジェクト「${name}」を作成`,
+      after: {
+        orgId: ctx.orgId,
+        name,
+        description: project.description,
+        color: project.color,
       },
     });
 

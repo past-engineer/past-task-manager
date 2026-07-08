@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { TaskLite, MilestoneLite } from "@/lib/types";
+import type { TaskLite, MilestoneLite, BusyDayInfo } from "@/lib/types";
 import { STATUS_COLORS } from "@/lib/constants";
 import Avatar from "@/components/Avatar";
 import {
@@ -60,7 +60,7 @@ export default function GanttView({
   milestones: MilestoneLite[];
   nonWorkingWeekdays: number[];
   orgHolidays?: string[];
-  fullyBusyDays?: string[];
+  fullyBusyDays?: BusyDayInfo[];
   onOpen: (id: string) => void;
   onPatch: (id: string, data: Partial<TaskLite>) => void;
   onMilestonePatch: (id: string, dateIso: string) => void;
@@ -69,11 +69,17 @@ export default function GanttView({
   const holidaySet = new Set(
     orgHolidays.map((d) => dayValue(d)).filter((d): d is number => d !== null)
   );
-  const busySet = new Set(
-    fullyBusyDays
-      .map((d) => dayValue(d))
-      .filter((d): d is number => d !== null)
-  );
+  const busyMap = new Map<number, BusyDayInfo>();
+  for (const b of fullyBusyDays) {
+    const d = dayValue(b.date);
+    if (d !== null) busyMap.set(d, b);
+  }
+  const busySet = new Set(busyMap.keys());
+  const [busyHover, setBusyHover] = useState<{
+    info: BusyDayInfo;
+    x: number;
+    y: number;
+  } | null>(null);
   // 全曜日が非稼働なら曜日側は実質無効化（無限スキップ防止）
   const weekOff =
     nonWorkingWeekdays.length >= 7
@@ -351,6 +357,22 @@ export default function GanttView({
             <div
               className="relative"
               style={{ width: trackW, height: tasks.length * ROW_H }}
+              onMouseMove={(e) => {
+                if (dragRef.current || msDragRef.current) {
+                  if (busyHover) setBusyHover(null);
+                  return;
+                }
+                const rect = e.currentTarget.getBoundingClientRect();
+                const idx = Math.floor((e.clientX - rect.left) / CELL);
+                const d = range.min + idx * DAY_MS;
+                const info = busyMap.get(d);
+                if (info && !isOff(d)) {
+                  setBusyHover({ info, x: e.clientX, y: e.clientY });
+                } else if (busyHover) {
+                  setBusyHover(null);
+                }
+              }}
+              onMouseLeave={() => setBusyHover(null)}
             >
               {/* non-working day + today overlays */}
               {range.days.map((d, i) =>
@@ -476,6 +498,54 @@ export default function GanttView({
                   </div>
                 );
               })}
+
+              {/* 全員稼働中ツールチップ */}
+              {busyHover && (
+                <div
+                  className="pointer-events-none fixed z-50 w-72 rounded-lg border border-neutral-200 bg-white p-3 shadow-xl"
+                  style={{
+                    left: Math.min(
+                      busyHover.x + 14,
+                      (typeof window !== "undefined"
+                        ? window.innerWidth
+                        : 1200) - 300
+                    ),
+                    top:
+                      busyHover.y +
+                      (typeof window !== "undefined" &&
+                      busyHover.y > window.innerHeight - 260
+                        ? -230
+                        : 16),
+                  }}
+                >
+                  <p className="mb-2 text-xs font-semibold text-red-500">
+                    {busyHover.info.date.slice(5).replace("-", "/")}
+                    ：全メンバーの予定が埋まっています
+                  </p>
+                  <div className="max-h-52 space-y-2 overflow-hidden">
+                    {busyHover.info.members.map((m, i) => (
+                      <div key={i}>
+                        <p className="text-xs font-medium text-neutral-700">
+                          {m.name}
+                        </p>
+                        {m.items.slice(0, 4).map((it, j) => (
+                          <p
+                            key={j}
+                            className="truncate text-xs text-neutral-500"
+                          >
+                            ・{it}
+                          </p>
+                        ))}
+                        {m.items.length > 4 && (
+                          <p className="text-xs text-neutral-400">
+                            ほか{m.items.length - 4}件
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* bars */}
               {tasks.map((t, i) => {

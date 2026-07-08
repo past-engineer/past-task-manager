@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { auth, signOut } from "@/auth";
 import Avatar from "@/components/Avatar";
 import OrgSwitcher from "@/components/OrgSwitcher";
+import PresenceIndicator from "@/components/PresenceIndicator";
 import { getUserOrgs, getCurrentOrg } from "@/lib/org";
 
 export default async function AppLayout({
@@ -69,6 +70,12 @@ export default async function AppLayout({
                 メンバースケジュール
               </Link>
               <Link
+                href="/history"
+                className="border-b border-transparent pb-0.5 text-neutral-500 transition hover:border-neutral-800 hover:text-neutral-900"
+              >
+                変更履歴
+              </Link>
+              <Link
                 href="/settings"
                 className="border-b border-transparent pb-0.5 text-neutral-500 transition hover:border-neutral-800 hover:text-neutral-900"
               >
@@ -77,6 +84,7 @@ export default async function AppLayout({
             </nav>
           </div>
           <div className="flex items-center gap-3">
+            <PresenceIndicator currentUserId={user.id!} />
             <span className="hidden text-[13px] text-neutral-500 sm:block">
               {user.name ?? user.email}
             </span>

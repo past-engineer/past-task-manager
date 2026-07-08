@@ -4,6 +4,11 @@ import { prisma } from "@/lib/prisma";
 import { requireUserId, userCanAccessTask } from "@/lib/data";
 import { getTaskRole, canEdit } from "@/lib/org";
 import { isTaskStatus } from "@/lib/constants";
+import {
+  logActivity,
+  pickTaskSnapshot,
+  TASK_FIELD_LABELS,
+} from "@/lib/audit";
 
 export async function GET(
   _req: Request,
@@ -77,11 +82,32 @@ export async function PATCH(
     if (body.position !== undefined) data.position = Number(body.position);
     if (body.flexible !== undefined) data.flexible = !!body.flexible;
 
+    const before = await prisma.task.findUnique({
+      where: { id },
+      include: { project: { select: { orgId: true } } },
+    });
+
     const task = await prisma.task.update({
       where: { id },
       data,
       include: { assignee: true },
     });
+
+    if (before?.project.orgId) {
+      const changed = Object.keys(data)
+        .map((k) => TASK_FIELD_LABELS[k] ?? k)
+        .join("・");
+      await logActivity({
+        orgId: before.project.orgId,
+        actorId: userId,
+        entity: "task",
+        entityId: id,
+        action: "update",
+        summary: `タスク「${before.title}」を更新（${changed}）`,
+        before: pickTaskSnapshot(before as unknown as Record<string, unknown>),
+        after: pickTaskSnapshot(task as unknown as Record<string, unknown>),
+      });
+    }
     return NextResponse.json(task);
   } catch {
     return NextResponse.json({ error: "ERROR" }, { status: 400 });
@@ -98,7 +124,22 @@ export async function DELETE(
     if (!canEdit(await getTaskRole(id, userId))) {
       return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
     }
+    const before = await prisma.task.findUnique({
+      where: { id },
+      include: { project: { select: { orgId: true } } },
+    });
     await prisma.task.delete({ where: { id } });
+    if (before?.project.orgId) {
+      await logActivity({
+        orgId: before.project.orgId,
+        actorId: userId,
+        entity: "task",
+        entityId: id,
+        action: "delete",
+        summary: `タスク「${before.title}」を削除`,
+        before: pickTaskSnapshot(before as unknown as Record<string, unknown>),
+      });
+    }
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: "ERROR" }, { status: 400 });

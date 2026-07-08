@@ -8,7 +8,12 @@ import {
 } from "@/lib/data";
 import { getProjectRole, canEdit as canEditRole } from "@/lib/org";
 import ProjectBoard from "@/components/ProjectBoard";
-import type { TaskLite, MemberLite, MilestoneLite } from "@/lib/types";
+import type {
+  TaskLite,
+  MemberLite,
+  MilestoneLite,
+  BusyDayInfo,
+} from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -69,7 +74,7 @@ export default async function ProjectPage({
     : { nonWorkingWeekdays: [0, 6], dailyWorkHours: 8, holidays: [] };
 
   // 全メンバーの予定が埋まっている日（組織全体の未完了タスク＋個人非稼働日で判定）
-  const fullyBusyDays: string[] = [];
+  const fullyBusyDays: BusyDayInfo[] = [];
   if (project.orgId && orgMembers.length > 0) {
     const memberIds = orgMembers.map((m) => m.userId);
     const [busyTasks, allDaysOff] = await Promise.all([
@@ -81,9 +86,11 @@ export default async function ProjectPage({
         },
         select: {
           assigneeId: true,
+          title: true,
           startDate: true,
           endDate: true,
           dueDate: true,
+          project: { select: { name: true } },
         },
       }),
       prisma.dayOff.findMany({
@@ -95,6 +102,13 @@ export default async function ProjectPage({
     const toDay = (d: Date | null) =>
       d ? Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) : null;
     const busyByUser = new Map<string, Set<number>>(
+      memberIds.map((uid) => [uid, new Set<number>()])
+    );
+    const intervalsByUser = new Map<
+      string,
+      { lo: number; hi: number; label: string }[]
+    >(memberIds.map((uid) => [uid, []]));
+    const dayOffByUser = new Map<string, Set<number>>(
       memberIds.map((uid) => [uid, new Set<number>()])
     );
     for (const t of busyTasks) {
@@ -110,19 +124,38 @@ export default async function ProjectPage({
       const set = busyByUser.get(t.assigneeId);
       if (!set) continue;
       for (let d = lo; d <= hi; d += DAY) set.add(d);
+      intervalsByUser
+        .get(t.assigneeId)!
+        .push({ lo, hi, label: `${t.title}（${t.project.name}）` });
     }
     for (const off of allDaysOff) {
       const d = toDay(off.date);
-      const set = busyByUser.get(off.userId);
-      if (d !== null && set) set.add(d);
+      if (d === null) continue;
+      busyByUser.get(off.userId)?.add(d);
+      dayOffByUser.get(off.userId)?.add(d);
     }
+    const memberName = new Map(
+      orgMembers.map((m) => [
+        m.userId,
+        m.user.name ?? m.user.email ?? "（不明）",
+      ])
+    );
     const sets = [...busyByUser.values()].sort((a, b) => a.size - b.size);
     const [first, ...rest] = sets;
     if (first) {
       for (const d of first) {
-        if (rest.every((s) => s.has(d))) {
-          fullyBusyDays.push(new Date(d).toISOString().slice(0, 10));
-        }
+        if (!rest.every((s) => s.has(d))) continue;
+        fullyBusyDays.push({
+          date: new Date(d).toISOString().slice(0, 10),
+          members: memberIds.map((uid) => {
+            const items = intervalsByUser
+              .get(uid)!
+              .filter((iv) => iv.lo <= d && d <= iv.hi)
+              .map((iv) => iv.label);
+            if (dayOffByUser.get(uid)!.has(d)) items.push("非稼働日（休暇）");
+            return { name: memberName.get(uid)!, items };
+          }),
+        });
       }
     }
   }

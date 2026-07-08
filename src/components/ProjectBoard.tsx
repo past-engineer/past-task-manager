@@ -2,7 +2,12 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useUndo, pickPrev } from "@/lib/useUndo";
-import type { TaskLite, MemberLite, MilestoneLite } from "@/lib/types";
+import type {
+  TaskLite,
+  MemberLite,
+  MilestoneLite,
+  BusyDayInfo,
+} from "@/lib/types";
 import type { TaskStatus } from "@prisma/client";
 import KanbanBoard from "@/components/KanbanBoard";
 import ListView from "@/components/ListView";
@@ -37,7 +42,7 @@ export default function ProjectBoard({
   initialMilestones: MilestoneLite[];
   nonWorkingWeekdays: number[];
   orgHolidays?: string[];
-  fullyBusyDays?: string[];
+  fullyBusyDays?: BusyDayInfo[];
   canEdit?: boolean;
   projectThumbnailUrl?: string | null;
   initialTasks: TaskLite[];

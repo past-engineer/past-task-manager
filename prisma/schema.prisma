@@ -21,6 +21,8 @@ model User {
   image         String?
   // 個人の1日の稼働限界（時間）。null なら全体設定を使用
   dailyCapacity Float?
+  // 在席表示用：最終アクセス時刻（ハートビート）
+  lastSeenAt    DateTime?
 
   accounts Account[]
   sessions Session[]
@@ -32,6 +34,7 @@ model User {
   comments       Comment[]
   attachments    Attachment[]
   daysOff        DayOff[]
+  activityLogs   ActivityLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -89,12 +92,13 @@ model Organization {
   logoUrl  String? @db.Text
   logoPath String? @db.Text
 
-  members   OrganizationMember[]
-  projects  Project[]
-  folders   ProjectFolder[]
-  setting   WorkspaceSetting?
-  holidays  OrgHoliday[]
-  templates ProjectTemplate[]
+  members      OrganizationMember[]
+  projects     Project[]
+  folders      ProjectFolder[]
+  setting      WorkspaceSetting?
+  holidays     OrgHoliday[]
+  templates    ProjectTemplate[]
+  activityLogs ActivityLog[]
 
   createdAt DateTime @default(now())
 }
@@ -287,6 +291,27 @@ model DayOff {
 
   @@unique([userId, date])
   @@index([userId])
+}
+
+// 変更履歴（監査ログ）
+model ActivityLog {
+  id       String  @id @default(cuid())
+  orgId    String
+  actorId  String?
+  entity   String // task | task-batch | milestone | project | system
+  entityId String
+  action   String // create | update | delete | revert
+  summary  String @db.Text
+  before   Json?
+  after    Json?
+  reverted Boolean @default(false)
+
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  actor User?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([orgId, createdAt])
 }
 
 // プロジェクトテンプレート

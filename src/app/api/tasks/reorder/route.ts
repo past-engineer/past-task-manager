@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUserId } from "@/lib/data";
 import { getProjectRole, canEdit } from "@/lib/org";
 import { isTaskStatus } from "@/lib/constants";
+import { logActivity } from "@/lib/audit";
 
 // カンバン/リストのドラッグ後にまとめて並び順とステータスを更新
 // body: { projectId, updates: [{ id, status, position }] }
@@ -20,6 +21,15 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
     }
 
+    // 変更前の状態を記録（巻き戻し用）
+    const ids = updates
+      .filter((u: { id?: string }) => u && u.id)
+      .map((u: { id: string }) => u.id);
+    const beforeTasks = await prisma.task.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, status: true, position: true },
+    });
+
     const ops = updates
       .filter((u: { id?: string }) => u && u.id)
       .map((u: { id: string; status?: string; position?: number }) =>
@@ -34,6 +44,23 @@ export async function PATCH(req: Request) {
       );
 
     await prisma.$transaction(ops);
+
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: { orgId: true, name: true },
+    });
+    if (project?.orgId) {
+      await logActivity({
+        orgId: project.orgId,
+        actorId: userId,
+        entity: "task-batch",
+        entityId: projectId,
+        action: "update",
+        summary: `「${project.name}」でタスクを並べ替え（${beforeTasks.length}件）`,
+        before: beforeTasks,
+        after: updates,
+      });
+    }
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: "ERROR" }, { status: 400 });

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUserId } from "@/lib/data";
 import { getProjectRole, canEdit } from "@/lib/org";
 import { isTaskStatus } from "@/lib/constants";
+import { logActivity, pickTaskSnapshot } from "@/lib/audit";
 
 export async function POST(req: Request) {
   try {
@@ -47,8 +48,19 @@ export async function POST(req: Request) {
         endDate: body.endDate ? new Date(body.endDate) : null,
         position: (last?.position ?? 0) + 1,
       },
-      include: { assignee: true },
+      include: { assignee: true, project: { select: { orgId: true } } },
     });
+    if (task.project.orgId) {
+      await logActivity({
+        orgId: task.project.orgId,
+        actorId: userId,
+        entity: "task",
+        entityId: task.id,
+        action: "create",
+        summary: `タスク「${task.title}」を作成`,
+        after: pickTaskSnapshot(task as unknown as Record<string, unknown>),
+      });
+    }
     return NextResponse.json(task, { status: 201 });
   } catch {
     return NextResponse.json({ error: "ERROR" }, { status: 400 });

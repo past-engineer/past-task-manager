@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUserId, userCanAccessProject } from "@/lib/data";
 import { getProjectRole, canEdit } from "@/lib/org";
+import { logActivity } from "@/lib/audit";
 
 export async function GET(
   _req: Request,
@@ -44,7 +45,19 @@ export async function POST(
     }
     const milestone = await prisma.milestone.create({
       data: { projectId: id, title, date },
+      include: { project: { select: { orgId: true } } },
     });
+    if (milestone.project.orgId) {
+      await logActivity({
+        orgId: milestone.project.orgId,
+        actorId: userId,
+        entity: "milestone",
+        entityId: milestone.id,
+        action: "create",
+        summary: `マイルストーン「${title}」を作成`,
+        after: { projectId: id, title, date },
+      });
+    }
     return NextResponse.json(milestone, { status: 201 });
   } catch {
     return NextResponse.json({ error: "ERROR" }, { status: 400 });

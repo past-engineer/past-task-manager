@@ -80,6 +80,12 @@ export type TemplateLite = {
   milestones: TemplateMilestoneLite[];
 };
 
+// 全メンバーの予定が埋まっている日の内訳
+export type BusyDayInfo = {
+  date: string;
+  members: { name: string; items: string[] }[];
+};
+
 export type MilestoneLite = {
   id: string;
   projectId: string;
