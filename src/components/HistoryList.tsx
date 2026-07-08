@@ -16,21 +16,6 @@ export type ActivityItem = {
   actor: UserLite | null;
 };
 
-const ENTITY_LABELS: Record<string, string> = {
-  task: "タスク",
-  "task-batch": "並べ替え",
-  milestone: "マイルストーン",
-  project: "プロジェクト",
-  system: "システム",
-};
-
-const ACTION_LABELS: Record<string, string> = {
-  create: "作成",
-  update: "更新",
-  delete: "削除",
-  revert: "巻き戻し",
-};
-
 export default function HistoryList({
   logs,
   canRevert,
@@ -104,21 +89,6 @@ export default function HistoryList({
                 {new Date(log.createdAt).toLocaleString("ja-JP")}
               </p>
             </div>
-            <span
-              className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
-                log.action === "delete"
-                  ? "bg-red-50 text-red-500"
-                  : log.action === "create"
-                    ? "bg-emerald-50 text-emerald-600"
-                    : log.action === "revert"
-                      ? "bg-violet-50 text-violet-600"
-                      : "bg-neutral-100 text-neutral-500"
-              }`}
-            >
-              {ENTITY_LABELS[log.entity] ?? log.entity}
-              {log.entity !== "system" &&
-                `・${ACTION_LABELS[log.action] ?? log.action}`}
-            </span>
             {log.reverted && (
               <span className="shrink-0 text-[11px] text-neutral-400">
                 取消済み
