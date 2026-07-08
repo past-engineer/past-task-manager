@@ -163,6 +163,29 @@ export default function AllProjectsGantt({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // マイルストーンのラベル最大幅（同一プロジェクト内で隣の◆までの間隔から算出）
+  const msLabelW = useMemo(() => {
+    const map = new Map<string, number>();
+    const byProject = new Map<string, { id: string; d: number }[]>();
+    for (const m of milestones) {
+      const d = dayValue(m.date);
+      if (d === null) continue;
+      if (!byProject.has(m.projectId)) byProject.set(m.projectId, []);
+      byProject.get(m.projectId)!.push({ id: m.id, d });
+    }
+    for (const items of byProject.values()) {
+      items.sort((a, b) => a.d - b.d);
+      for (let i = 0; i < items.length; i++) {
+        const gap =
+          i + 1 < items.length
+            ? ((items[i + 1].d - items[i].d) / DAY_MS) * CELL - 18
+            : 160;
+        map.set(items[i].id, Math.max(0, Math.min(160, gap)));
+      }
+    }
+    return map;
+  }, [milestones]);
+
   const months = useMemo(() => {
     const out: { label: string; count: number }[] = [];
     for (const d of range.days) {
@@ -657,22 +680,29 @@ export default function AllProjectsGantt({
                       onPointerDown={(e) => startMsDrag(e, m)}
                       onPointerMove={moveMsDrag}
                       onPointerUp={() => endMsDrag(m)}
-                      className="group absolute z-30 cursor-grab touch-none"
+                      className="group absolute z-30 cursor-grab touch-none hover:z-[60]"
                       style={{
                         left: x - 7,
                         top: bounds.top + 1,
                         width: 14,
                         height: 18,
                       }}
-                      title={`${m.title}（${fmtMD(d)}）`}
                     >
                       <span
                         className={`absolute left-[2px] top-[3px] block h-2.5 w-2.5 rotate-45 rounded-[2px] ${
                           dragging ? "bg-violet-400" : "bg-violet-600"
                         }`}
                       />
-                      <span className="pointer-events-none absolute left-4 top-0 z-30 max-w-40 truncate whitespace-nowrap rounded bg-violet-600 px-1.5 py-0.5 text-[10px] font-medium text-white opacity-90">
-                        {m.title} {fmtMD(d)}
+                      {(msLabelW.get(m.id) ?? 160) >= 36 && (
+                        <span
+                          className="pointer-events-none absolute left-4 top-0 z-30 truncate whitespace-nowrap rounded bg-violet-600 px-1.5 py-0.5 text-[10px] font-medium text-white opacity-90 group-hover:invisible"
+                          style={{ maxWidth: msLabelW.get(m.id) ?? 160 }}
+                        >
+                          {m.title} {fmtMD(d)}
+                        </span>
+                      )}
+                      <span className="pointer-events-none absolute left-4 top-0 z-50 hidden whitespace-nowrap rounded bg-violet-700 px-1.5 py-0.5 text-[10px] font-medium text-white shadow-lg group-hover:block">
+                        {m.title}（{fmtMD(d)}）
                       </span>
                     </div>
                   </div>
