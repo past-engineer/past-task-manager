@@ -46,7 +46,20 @@ export default async function ProjectPage({
   if (!project) notFound();
 
   const tasks = JSON.parse(JSON.stringify(project.tasks)) as TaskLite[];
-  const members = JSON.parse(JSON.stringify(project.members)) as MemberLite[];
+
+  // 担当候補は組織メンバー全員
+  const orgMembers = project.orgId
+    ? await prisma.organizationMember.findMany({
+        where: { orgId: project.orgId },
+        include: { user: true },
+        orderBy: { createdAt: "asc" },
+      })
+    : [];
+  const members = JSON.parse(
+    JSON.stringify(
+      orgMembers.map((m) => ({ id: m.id, role: "MEMBER", user: m.user }))
+    )
+  ) as MemberLite[];
   const milestones = JSON.parse(
     JSON.stringify(project.milestones)
   ) as MilestoneLite[];

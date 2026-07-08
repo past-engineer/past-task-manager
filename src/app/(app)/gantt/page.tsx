@@ -46,11 +46,21 @@ export default async function AllGanttPage() {
     JSON.stringify(rawMilestones)
   ) as MilestoneLite[];
 
+  // 担当候補は組織メンバー全員（全プロジェクト共通）
+  const orgMembers = await prisma.organizationMember.findMany({
+    where: { orgId: org.orgId },
+    include: { user: true },
+    orderBy: { createdAt: "asc" },
+  });
+  const orgMembersLite = JSON.parse(
+    JSON.stringify(
+      orgMembers.map((m) => ({ id: m.id, role: "MEMBER", user: m.user }))
+    )
+  ) as MemberLite[];
+
   const membersByProject: Record<string, MemberLite[]> = {};
   const projectList = projects.map((p) => {
-    membersByProject[p.id] = JSON.parse(
-      JSON.stringify(p.members)
-    ) as MemberLite[];
+    membersByProject[p.id] = orgMembersLite;
     return { id: p.id, name: p.name, color: p.color };
   });
 

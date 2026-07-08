@@ -110,6 +110,24 @@ export default function AllProjectsGantt({
   const [msDrag, setMsDrag] = useState<MsDrag | null>(null);
   const msDragRef = useRef<MsDrag | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [showDone, setShowDone] = useState(true);
+
+  useEffect(() => {
+    const v = window.localStorage.getItem("ptm-gantt-show-done");
+    if (v === "0") setShowDone(false);
+  }, []);
+
+  function toggleShowDone() {
+    setShowDone((prev) => {
+      window.localStorage.setItem("ptm-gantt-show-done", prev ? "0" : "1");
+      return !prev;
+    });
+  }
+
+  const visibleTasks = useMemo(
+    () => (showDone ? tasks : tasks.filter((t) => t.status !== "DONE")),
+    [tasks, showDone]
+  );
 
   function toggleProject(id: string) {
     setCollapsed((prev) => {
@@ -123,14 +141,14 @@ export default function AllProjectsGantt({
   const range = useMemo(
     () =>
       buildRange([
-        ...tasks.flatMap((t) => [
+        ...visibleTasks.flatMap((t) => [
           dayValue(t.startDate),
           dayValue(t.endDate),
           dayValue(t.dueDate),
         ]),
         ...milestones.map((m) => dayValue(m.date)),
       ]),
-    [tasks, milestones]
+    [visibleTasks, milestones]
   );
   const trackW = range.days.length * CELL;
   const today = todayMs();
@@ -163,14 +181,14 @@ export default function AllProjectsGantt({
       out.push({ kind: "project", project: p, top, height: PROJECT_H });
       top += PROJECT_H;
       if (collapsed.has(p.id)) continue;
-      for (const t of tasks) {
+      for (const t of visibleTasks) {
         if (t.projectId !== p.id) continue;
         out.push({ kind: "task", task: t, top, height: ROW_H });
         top += ROW_H;
       }
     }
     return out;
-  }, [projects, tasks, collapsed]);
+  }, [projects, visibleTasks, collapsed]);
 
   const totalH = rows.reduce((s, r) => s + r.height, 0);
 
@@ -206,7 +224,7 @@ export default function AllProjectsGantt({
         max: cur ? Math.max(cur.max, hi) : hi,
       });
     };
-    for (const t of tasks) {
+    for (const t of visibleTasks) {
       const s0 = dayValue(t.startDate);
       const e0 = dayValue(t.endDate) ?? dayValue(t.dueDate);
       extend(t.projectId, s0 ?? e0, e0 ?? s0);
@@ -218,7 +236,7 @@ export default function AllProjectsGantt({
       extend(m.projectId, d, d);
     }
     return map;
-  }, [tasks, milestones]);
+  }, [visibleTasks, milestones]);
 
   const pushUndo = useUndo();
   const tasksStateRef = useRef(tasks);
@@ -421,7 +439,16 @@ export default function AllProjectsGantt({
         <p className="text-xs text-neutral-400">
           バー＝開始日〜終了日（ドラッグで移動、両端で伸縮）。赤いライン＝期限。◆＝マイルストーン（ドラッグで移動、クリックで編集。追加は各プロジェクトのガント画面から）。日付未設定のタスクは行内をクリックで設定できます。
         </p>
-        <div className="flex shrink-0 gap-1.5">
+        <div className="flex shrink-0 items-center gap-1.5">
+          <label className="mr-2 flex cursor-pointer items-center gap-1.5 text-xs text-neutral-600">
+            <input
+              type="checkbox"
+              checked={showDone}
+              onChange={toggleShowDone}
+              className="h-3.5 w-3.5 rounded border-neutral-300"
+            />
+            完了を表示
+          </label>
           <button
             onClick={() => setCollapsed(new Set(projects.map((p) => p.id)))}
             className="rounded-md border border-neutral-200 px-2.5 py-1 text-xs text-neutral-600 transition hover:border-neutral-400"
@@ -515,7 +542,11 @@ export default function AllProjectsGantt({
                     </span>
                     {collapsed.has(row.project.id) && (
                       <span className="ml-auto shrink-0 text-xs text-neutral-400">
-                        {tasks.filter((t) => t.projectId === row.project.id).length}
+                        {
+                          visibleTasks.filter(
+                            (t) => t.projectId === row.project.id
+                          ).length
+                        }
                       </span>
                     )}
                   </button>

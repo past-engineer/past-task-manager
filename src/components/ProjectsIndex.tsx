@@ -8,7 +8,7 @@ import type { FolderLite, ProjectCardData } from "@/lib/types";
 const DT_PROJECT = "text/project-id";
 const DT_FOLDER = "text/folder-id";
 
-type ViewMode = "tree" | "icons";
+type ViewMode = "tree" | "icons" | "list";
 
 export default function ProjectsIndex({
   folders,
@@ -43,7 +43,7 @@ export default function ProjectsIndex({
 
   useEffect(() => {
     const v = window.localStorage.getItem("ptm-projects-view");
-    if (v === "tree" || v === "icons") setViewState(v);
+    if (v === "tree" || v === "icons" || v === "list") setViewState(v);
   }, []);
 
   function setView(v: ViewMode) {
@@ -411,6 +411,146 @@ export default function ProjectsIndex({
     );
   }
 
+  function FolderRow({ f }: { f: FolderLite }) {
+    const count = projectsIn(f.id).length + childrenOf(f.id).length;
+    return (
+      <div
+        draggable={canEdit}
+        onDragStart={(e) => {
+          e.dataTransfer.setData(DT_FOLDER, f.id);
+          e.dataTransfer.effectAllowed = "move";
+          e.stopPropagation();
+        }}
+        onDragOver={(e) => dragOver(e, `folder:${f.id}`)}
+        onDragLeave={() => setDropTarget(null)}
+        onDrop={(e) => drop(e, { folderId: f.id })}
+        onClick={() => setCurrentId(f.id)}
+        className={`flex cursor-pointer items-center gap-3 px-4 py-2.5 transition hover:bg-neutral-50 ${dropHighlight(
+          `folder:${f.id}`
+        )}`}
+      >
+        <span className="text-lg leading-none">📁</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-neutral-800">
+          {f.name}
+        </span>
+        <span className="shrink-0 text-xs text-neutral-400">{count}件</span>
+        {canEdit && (
+          <>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                renameFolder(f);
+              }}
+              className="text-xs text-neutral-300 hover:text-neutral-600"
+              title="名前を変更"
+            >
+              ✎
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                deleteFolder(f);
+              }}
+              className="text-xs text-neutral-300 hover:text-red-500"
+              title="フォルダを削除"
+            >
+              ✕
+            </button>
+          </>
+        )}
+        <span className="text-neutral-300">›</span>
+      </div>
+    );
+  }
+
+  function ProjectRow({ p }: { p: ProjectCardData }) {
+    return (
+      <div
+        className="relative"
+        draggable={canEdit}
+        onDragStart={(e) => {
+          e.dataTransfer.setData(DT_PROJECT, p.id);
+          e.dataTransfer.effectAllowed = "move";
+        }}
+      >
+        <Link
+          href={`/projects/${p.id}`}
+          onClick={() => setNavigating(true)}
+          className="flex items-center gap-3 py-2.5 pl-4 pr-10 transition hover:bg-neutral-50"
+        >
+          <span
+            className="h-2.5 w-2.5 shrink-0 rounded-full"
+            style={{ background: p.color }}
+          />
+          <span className="min-w-0 flex-1 truncate text-sm text-neutral-800">
+            {p.name}
+          </span>
+          {p.description && (
+            <span className="hidden max-w-64 shrink-0 truncate text-xs text-neutral-400 md:block">
+              {p.description}
+            </span>
+          )}
+          <span className="w-16 shrink-0 text-right text-xs text-neutral-400">
+            タスク {p._count.tasks}
+          </span>
+          <span className="w-20 shrink-0 text-right text-xs text-neutral-400">
+            メンバー {p._count.members}
+          </span>
+        </Link>
+
+        {canEdit && (
+          <button
+            onClick={() => setMenuId(menuId === p.id ? null : p.id)}
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-1.5 py-0.5 text-neutral-300 transition hover:bg-neutral-100 hover:text-neutral-600"
+            title="メニュー"
+          >
+            ⋯
+          </button>
+        )}
+
+        {menuId === p.id && (
+          <>
+            <div
+              className="fixed inset-0 z-20"
+              onClick={() => setMenuId(null)}
+            />
+            <div className="absolute right-2 top-9 z-30 w-52 rounded-lg border border-neutral-200 bg-white py-1 shadow-lg">
+              <p className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-neutral-400">
+                フォルダへ移動
+              </p>
+              {p.folderId && (
+                <button
+                  onClick={() => patchProject(p.id, { folderId: null })}
+                  className="block w-full px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-50"
+                >
+                  未分類に戻す
+                </button>
+              )}
+              {folders
+                .filter((f) => f.id !== p.folderId)
+                .map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => patchProject(p.id, { folderId: f.id })}
+                    className="block w-full truncate px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-50"
+                  >
+                    📁 {f.name}
+                  </button>
+                ))}
+              <div className="my-1 border-t border-neutral-100" />
+              <button
+                onClick={() => patchProject(p.id, { archived: true })}
+                className="block w-full px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-50"
+              >
+                アーカイブへ移動
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
   const rootFolders = childrenOf(null);
   const unfiled = projectsIn(null);
 
@@ -467,11 +607,21 @@ export default function ProjectsIndex({
             >
               アイコン
             </button>
+            <button
+              onClick={() => setView("list")}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                view === "list"
+                  ? "bg-neutral-900 text-white"
+                  : "text-neutral-600 hover:bg-neutral-100"
+              }`}
+            >
+              リスト
+            </button>
           </div>
           {canEdit && (
             <p className="hidden text-xs text-neutral-400 md:block">
               カードやフォルダをドラッグして、フォルダ
-              {view === "icons" ? "・パンくず" : "見出し／未分類"}
+              {view === "tree" ? "見出し／未分類" : "・パンくず"}
               ／アーカイブへドロップで移動できます。
             </p>
           )}
@@ -580,17 +730,37 @@ export default function ProjectsIndex({
             ))}
           </div>
 
-          {/* フォルダタイル */}
-          {childrenOf(effectiveId).length > 0 && (
-            <div className="mb-6 grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+          {view === "icons" ? (
+            <>
+              {/* フォルダタイル */}
+              {childrenOf(effectiveId).length > 0 && (
+                <div className="mb-6 grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+                  {childrenOf(effectiveId).map((f) => (
+                    <FolderTile key={f.id} f={f} />
+                  ))}
+                </div>
+              )}
+
+              {/* プロジェクトカード */}
+              <Grid list={projectsIn(effectiveId)} />
+            </>
+          ) : (
+            /* リスト表示 */
+            <div className="divide-y divide-neutral-100 rounded-lg border border-neutral-200 bg-white">
+              {childrenOf(effectiveId).length === 0 &&
+                projectsIn(effectiveId).length === 0 && (
+                  <p className="p-4 text-sm text-neutral-400">
+                    プロジェクトがありません
+                  </p>
+                )}
               {childrenOf(effectiveId).map((f) => (
-                <FolderTile key={f.id} f={f} />
+                <FolderRow key={f.id} f={f} />
+              ))}
+              {projectsIn(effectiveId).map((p) => (
+                <ProjectRow key={p.id} p={p} />
               ))}
             </div>
           )}
-
-          {/* プロジェクトカード */}
-          <Grid list={projectsIn(effectiveId)} />
         </section>
       )}
 

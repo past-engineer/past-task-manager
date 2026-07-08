@@ -47,11 +47,15 @@ export default async function SchedulePage() {
     dailyCapacity: m.user.dailyCapacity,
   }));
 
+  // 担当候補は組織メンバー全員（全プロジェクト共通）
+  const orgMembersLite = JSON.parse(
+    JSON.stringify(
+      orgMembers.map((m) => ({ id: m.id, role: "MEMBER", user: m.user }))
+    )
+  ) as MemberLite[];
   const membersByProject: Record<string, MemberLite[]> = {};
   for (const p of projects) {
-    membersByProject[p.id] = JSON.parse(
-      JSON.stringify(p.members)
-    ) as MemberLite[];
+    membersByProject[p.id] = orgMembersLite;
   }
 
   const { nonWorkingWeekdays, holidays } = await getWorkspaceSettings(
