@@ -13,7 +13,10 @@ import {
   STATUS_ORDER,
   STATUS_LABELS,
   REVIEW_ERROR_MESSAGES,
+  describeNotifyOutcome,
 } from "@/lib/constants";
+import type { NotifyOutcome } from "@/lib/types";
+import Toast, { type ToastData } from "@/components/Toast";
 import Avatar from "@/components/Avatar";
 import { DAY_MS, dayValue, fmtMD, weekdayOf } from "@/lib/dates";
 
@@ -59,10 +62,11 @@ export default function TaskDetailModal({
     holidays?: string[];
   } | null>(null);
   const [editingHours, setEditingHours] = useState<Record<number, string>>({});
-  // レビュー関連：通知チェックボックス＋FB入力
+  // レビュー関連：通知チェックボックス＋FB入力＋結果トースト
   const [notifyOnReview, setNotifyOnReview] = useState(true);
   const [fbOpen, setFbOpen] = useState(false);
   const [fbText, setFbText] = useState("");
+  const [toast, setToast] = useState<ToastData | null>(null);
 
   useEffect(() => {
     fetch("/api/settings")
@@ -88,8 +92,10 @@ export default function TaskDetailModal({
     };
   }, [taskId]);
 
-  async function patch(data: Partial<TaskDetail> & { notify?: boolean }) {
-    if (!task) return;
+  async function patch(
+    data: Partial<TaskDetail> & { notify?: boolean }
+  ): Promise<(TaskLite & { _notify?: NotifyOutcome | null }) | null> {
+    if (!task) return null;
     const { notify: _notify, ...fields } = data;
     void _notify;
     const optimistic = { ...task, ...fields };
@@ -100,18 +106,24 @@ export default function TaskDetailModal({
       body: JSON.stringify(data),
     });
     if (res.ok) {
-      const updated = (await res.json()) as TaskLite;
+      const updated = (await res.json()) as TaskLite & {
+        _notify?: NotifyOutcome | null;
+      };
       setTask({ ...optimistic, ...updated });
       onChanged({ ...updated, _count: task._count });
+      return updated;
     } else {
       const j = (await res.json().catch(() => ({}))) as { error?: string };
-      alert(
-        (j.error && REVIEW_ERROR_MESSAGES[j.error]) ??
-          "タスクの更新に失敗しました"
-      );
+      setToast({
+        message:
+          (j.error && REVIEW_ERROR_MESSAGES[j.error]) ??
+          "タスクの更新に失敗しました",
+        kind: "error",
+      });
       // サーバーの状態に戻す
       const r = await fetch(`/api/tasks/${taskId}`);
       if (r.ok) setTask(await r.json());
+      return null;
     }
   }
 
@@ -119,15 +131,20 @@ export default function TaskDetailModal({
   async function requestReview() {
     if (!task) return;
     if (!task.reviewerId) {
-      alert("先に「レビュー担当」を選択してください");
+      setToast({
+        message: "先に「レビュー担当」を選択してください",
+        kind: "error",
+      });
       return;
     }
-    await patch({ status: "IN_REVIEW", notify: notifyOnReview });
+    const r = await patch({ status: "IN_REVIEW", notify: notifyOnReview });
+    if (r && notifyOnReview) setToast(describeNotifyOutcome(r._notify));
   }
 
   // 承認して完了（IN_REVIEW → DONE）
   async function approveReview() {
-    await patch({ status: "DONE", notify: notifyOnReview });
+    const r = await patch({ status: "DONE", notify: notifyOnReview });
+    if (r && notifyOnReview) setToast(describeNotifyOutcome(r._notify));
   }
 
   // FBを返す（IN_REVIEW → FEEDBACK、コメント必須）
@@ -142,7 +159,8 @@ export default function TaskDetailModal({
       body: JSON.stringify({ body: `【FB】${text}` }),
     });
     const c = res.ok ? ((await res.json()) as CommentLite) : null;
-    await patch({ status: "FEEDBACK", notify: notifyOnReview });
+    const r = await patch({ status: "FEEDBACK", notify: notifyOnReview });
+    if (r && notifyOnReview) setToast(describeNotifyOutcome(r._notify));
     if (c) {
       setTask((prev) =>
         prev && !prev.comments.some((x) => x.id === c.id)
@@ -829,6 +847,8 @@ export default function TaskDetailModal({
           </div>
         )}
       </div>
+
+      {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
     </div>
   );
 }

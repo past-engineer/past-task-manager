@@ -4,6 +4,7 @@ import { requireUserId } from "@/lib/data";
 import { getProjectRole, canEdit } from "@/lib/org";
 import { isTaskStatus } from "@/lib/constants";
 import { logActivity } from "@/lib/audit";
+import type { NotifyOutcome } from "@/lib/types";
 import {
   notifyReviewTransition,
   validateReviewTransition,
@@ -120,6 +121,7 @@ export async function PATCH(req: Request) {
       where: { id: projectId },
       select: { orgId: true, name: true },
     });
+    let notifyOutcome: NotifyOutcome | null = null;
     if (project?.orgId) {
       await logActivity({
         orgId: project.orgId,
@@ -160,7 +162,7 @@ export async function PATCH(req: Request) {
             }),
           ]);
           if (after) {
-            await notifyReviewTransition({
+            notifyOutcome = await notifyReviewTransition({
               orgId: project.orgId,
               actorId: userId,
               actorName: actor?.name ?? actor?.email ?? "メンバー",
@@ -172,7 +174,7 @@ export async function PATCH(req: Request) {
         }
       }
     }
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, notify: notifyOutcome });
   } catch {
     return NextResponse.json({ error: "ERROR" }, { status: 400 });
   }

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUserId, userCanAccessTask } from "@/lib/data";
 import { getTaskRole, canEdit } from "@/lib/org";
 import { isTaskStatus } from "@/lib/constants";
+import type { NotifyOutcome } from "@/lib/types";
 import {
   notifyReviewTransition,
   validateReviewTransition,
@@ -129,6 +130,7 @@ export async function PATCH(
       include: { assignee: true, reviewer: true },
     });
 
+    let notifyOutcome: NotifyOutcome | null = null;
     if (before.project.orgId) {
       const changed = Object.keys(data)
         .map((k) => TASK_FIELD_LABELS[k] ?? k)
@@ -150,7 +152,7 @@ export async function PATCH(
           where: { id: userId },
           select: { name: true, email: true },
         });
-        await notifyReviewTransition({
+        notifyOutcome = await notifyReviewTransition({
           orgId: before.project.orgId,
           actorId: userId,
           actorName: actor?.name ?? actor?.email ?? "メンバー",
@@ -166,7 +168,7 @@ export async function PATCH(
         });
       }
     }
-    return NextResponse.json(task);
+    return NextResponse.json({ ...task, _notify: notifyOutcome });
   } catch {
     return NextResponse.json({ error: "ERROR" }, { status: 400 });
   }

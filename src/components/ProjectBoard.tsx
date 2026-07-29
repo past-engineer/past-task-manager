@@ -9,8 +9,13 @@ import type {
   BusyDayInfo,
 } from "@/lib/types";
 import type { TaskStatus } from "@prisma/client";
-import { REVIEW_ERROR_MESSAGES } from "@/lib/constants";
+import {
+  REVIEW_ERROR_MESSAGES,
+  describeNotifyOutcome,
+} from "@/lib/constants";
+import type { NotifyOutcome } from "@/lib/types";
 import type { ReviewDropInfo } from "@/components/KanbanBoard";
+import Toast, { type ToastData } from "@/components/Toast";
 import KanbanBoard from "@/components/KanbanBoard";
 import ListView from "@/components/ListView";
 import GanttView from "@/components/GanttView";
@@ -73,6 +78,7 @@ export default function ProjectBoard({
   const [openTaskId, setOpenTaskId] = useState<string | null>(
     initialOpenTaskId
   );
+  const [toast, setToast] = useState<ToastData | null>(null);
   const [newTaskStatus, setNewTaskStatus] = useState<TaskStatus | null>(null);
   const [milestones, setMilestones] =
     useState<MilestoneLite[]>(initialMilestones);
@@ -261,10 +267,18 @@ export default function ProjectBoard({
               : t;
           })
         );
-        alert(
-          (j.error && REVIEW_ERROR_MESSAGES[j.error]) ??
-            "タスクの更新に失敗しました"
-        );
+        setToast({
+          message:
+            (j.error && REVIEW_ERROR_MESSAGES[j.error]) ??
+            "タスクの更新に失敗しました",
+          kind: "error",
+        });
+      } else if (review?.notify) {
+        // 通知結果を表示（送信されました／エラー内容）
+        const j = (await res.json().catch(() => null)) as {
+          notify?: NotifyOutcome | null;
+        } | null;
+        setToast(describeNotifyOutcome(j?.notify));
       }
     },
     [pushUndo, rawReorder, members]
@@ -422,6 +436,8 @@ export default function ProjectBoard({
           }}
         />
       )}
+
+      {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
 
       {openTaskId && (
         <TaskDetailModal

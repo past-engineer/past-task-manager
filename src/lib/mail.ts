@@ -1,10 +1,14 @@
 // メール通知（Resend）
-// - RESEND_API_KEY / MAIL_FROM が未設定なら何もしない（アプリ内通知のみで動作）
+// - RESEND_API_KEY / MAIL_FROM が未設定なら送信をスキップし、その旨を結果で返す
 // - 既存の Resend アカウントに影響を与えないよう、このアプリ専用の API キーを
 //   発行して設定する想定（キー単位で失効・管理が独立する）
 // - SDK は使わず REST API を直接叩く（依存追加なし）
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
+
+export type MailSendResult =
+  | { sent: true }
+  | { sent: false; skipped?: string; error?: string };
 
 export function appUrl(path: string): string | null {
   const base =
@@ -17,15 +21,16 @@ export function appUrl(path: string): string | null {
   return `${base.replace(/\/$/, "")}${path}`;
 }
 
-/** メール送信（失敗しても本処理は止めない） */
+/** メール送信。結果（成功／スキップ理由／エラー内容）を返す */
 export async function sendMail(entry: {
   to: string;
   subject: string;
   text: string;
-}) {
+}): Promise<MailSendResult> {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.MAIL_FROM;
-  if (!apiKey || !from) return; // 未設定ならスキップ
+  if (!apiKey) return { sent: false, skipped: "RESEND_API_KEY が未設定" };
+  if (!from) return { sent: false, skipped: "MAIL_FROM が未設定" };
 
   try {
     const res = await fetch(RESEND_ENDPOINT, {
@@ -42,9 +47,22 @@ export async function sendMail(entry: {
       }),
     });
     if (!res.ok) {
-      console.error("[mail] send failed", res.status, await res.text());
+      const text = await res.text().catch(() => "");
+      let message = `HTTP ${res.status}`;
+      try {
+        const j = JSON.parse(text) as { message?: string; name?: string };
+        if (j.message) message += `: ${j.message}`;
+        else if (text) message += `: ${text.slice(0, 200)}`;
+      } catch {
+        if (text) message += `: ${text.slice(0, 200)}`;
+      }
+      console.error("[mail] send failed", message);
+      return { sent: false, error: message };
     }
+    return { sent: true };
   } catch (e) {
+    const message = e instanceof Error ? e.message : "不明なエラー";
     console.error("[mail]", e);
+    return { sent: false, error: message };
   }
 }

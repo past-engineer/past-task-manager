@@ -36,6 +36,49 @@ export const REVIEW_ERROR_MESSAGES: Record<string, string> = {
     "レビュー待ちからの承認・FBはレビュー担当（または管理者）のみ行えます",
 };
 
+/** 通知発行結果をトースト表示用のメッセージに変換する（クライアント用） */
+export function describeNotifyOutcome(
+  o:
+    | {
+        inApp: boolean;
+        mailSent: boolean;
+        mailSkipped?: string;
+        mailError?: string;
+        skipped?: string;
+      }
+    | null
+    | undefined
+): { message: string; kind: "success" | "error" | "info" } {
+  if (!o) {
+    return { message: "通知は送信されませんでした", kind: "info" };
+  }
+  if (o.skipped) {
+    return { message: `通知はスキップされました（${o.skipped}）`, kind: "info" };
+  }
+  if (o.mailSent) {
+    return {
+      message: "通知を送信しました（アプリ内＋メール）",
+      kind: "success",
+    };
+  }
+  if (o.mailError) {
+    return {
+      message: `アプリ内通知は送信しましたが、メール送信に失敗しました：${o.mailError}`,
+      kind: "error",
+    };
+  }
+  if (o.mailSkipped) {
+    return {
+      message: `アプリ内通知を送信しました（メールはスキップ：${o.mailSkipped}）`,
+      kind: "info",
+    };
+  }
+  if (o.inApp) {
+    return { message: "アプリ内通知を送信しました", kind: "success" };
+  }
+  return { message: "通知は送信されませんでした", kind: "info" };
+}
+
 /** レビュー関連の遷移か（通知確認 UI を出すか）の判定 */
 export function isReviewTransition(
   from: TaskStatus,

@@ -140,6 +140,20 @@ export type TaskDailyHoursLite = {
   hours: number;
 };
 
+/** 通知発行の結果（UI で「送信されました／エラー」を表示するために API が返す） */
+export type NotifyOutcome = {
+  /** アプリ内通知を作成したか */
+  inApp: boolean;
+  /** メールを送信できたか */
+  mailSent: boolean;
+  /** メールを送らなかった理由（設定不足など） */
+  mailSkipped?: string;
+  /** メール送信を試みて失敗した理由 */
+  mailError?: string;
+  /** 通知自体を送らなかった理由（自分自身宛てなど） */
+  skipped?: string;
+};
+
 export type NotificationLite = {
   id: string;
   type: "REVIEW_REQUESTED" | "REVIEW_APPROVED" | "REVIEW_FEEDBACK";

@@ -4,12 +4,15 @@
 //
 // 通知はオプトイン方式：UI 側のチェックボックスで notify=true が明示された
 // 場合のみ発行する（うっかりステータス変更で通知が飛ぶのを防ぐ）。
+//
+// 発行結果は NotifyOutcome として呼び出し元（APIレスポンス）に返し、
+// UI が「送信されました」「メール送信失敗: 〜」を表示できるようにする。
 
-import { after } from "next/server";
 import type { NotificationType, TaskStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendMail, appUrl } from "@/lib/mail";
 import { isReviewTransition } from "@/lib/constants";
+import type { NotifyOutcome } from "@/lib/types";
 
 type NotifyTaskInfo = {
   id: string;
@@ -27,10 +30,17 @@ async function createNotification(entry: {
   task: NotifyTaskInfo;
   message: string;
   emailSubject: string;
-}) {
+}): Promise<NotifyOutcome> {
   // 自分自身への通知は作らない（レビュアー＝担当者のケース）
-  if (entry.userId === entry.actorId) return;
+  if (entry.userId === entry.actorId) {
+    return {
+      inApp: false,
+      mailSent: false,
+      skipped: "通知先が自分自身のため送信しませんでした",
+    };
+  }
 
+  let inApp = false;
   try {
     await prisma.notification.create({
       data: {
@@ -43,35 +53,43 @@ async function createNotification(entry: {
         message: entry.message,
       },
     });
+    inApp = true;
   } catch (e) {
     console.error("[notify] create failed", e);
   }
 
-  // メールはレスポンス返却後に送信（API の応答速度に影響させない）
-  const recipientId = entry.userId;
-  const { message, emailSubject, task } = entry;
-  after(async () => {
-    try {
-      const user = await prisma.user.findUnique({
-        where: { id: recipientId },
-        select: { email: true },
-      });
-      if (!user?.email) return;
-      const link = appUrl(`/projects/${task.projectId}?task=${task.id}`);
-      await sendMail({
-        to: user.email,
-        subject: emailSubject,
-        text: `${message}\n${link ? `\n▼ タスクを開く\n${link}\n` : ""}`,
-      });
-    } catch (e) {
-      console.error("[notify] mail failed", e);
-    }
+  const user = await prisma.user
+    .findUnique({
+      where: { id: entry.userId },
+      select: { email: true },
+    })
+    .catch(() => null);
+  if (!user?.email) {
+    return {
+      inApp,
+      mailSent: false,
+      mailSkipped: "受信者のメールアドレスが未登録",
+    };
+  }
+
+  const link = appUrl(`/projects/${entry.task.projectId}?task=${entry.task.id}`);
+  const result = await sendMail({
+    to: user.email,
+    subject: entry.emailSubject,
+    text: `${entry.message}\n${link ? `\n▼ タスクを開く\n${link}\n` : ""}`,
   });
+
+  return {
+    inApp,
+    mailSent: result.sent,
+    mailSkipped: result.sent ? undefined : result.skipped,
+    mailError: result.sent ? undefined : result.error,
+  };
 }
 
 /**
  * ステータス変更に応じてレビュー関連の通知を発行する。
- * notify=false（チェックボックス OFF）の場合は何もしない。
+ * レビュー関連の遷移でなければ null を返す。
  */
 export async function notifyReviewTransition(entry: {
   orgId: string;
@@ -80,27 +98,42 @@ export async function notifyReviewTransition(entry: {
   task: NotifyTaskInfo;
   from: TaskStatus;
   to: TaskStatus;
-  /** FEEDBACK からの再依頼かどうか（文言の出し分け用） */
-  reRequest?: boolean;
-}) {
+}): Promise<NotifyOutcome | null> {
   const kind = isReviewTransition(entry.from, entry.to);
-  if (!kind) return;
+  if (!kind) return null;
   const { task, actorName } = entry;
 
-  if (kind === "request" && task.reviewerId) {
-    await createNotification({
+  if (kind === "request") {
+    if (!task.reviewerId) {
+      return {
+        inApp: false,
+        mailSent: false,
+        skipped: "レビュー担当が未設定のため通知先がありません",
+      };
+    }
+    return createNotification({
       orgId: entry.orgId,
       userId: task.reviewerId,
       actorId: entry.actorId,
       type: "REVIEW_REQUESTED",
       task,
       message: `${actorName}さんが「${task.title}」の${
-        entry.reRequest || entry.from === "FEEDBACK" ? "再レビュー" : "レビュー"
+        entry.from === "FEEDBACK" ? "再レビュー" : "レビュー"
       }を依頼しました`,
       emailSubject: `【past】レビュー依頼: ${task.title}`,
     });
-  } else if (kind === "approve" && task.assigneeId) {
-    await createNotification({
+  }
+
+  if (!task.assigneeId) {
+    return {
+      inApp: false,
+      mailSent: false,
+      skipped: "担当者が未設定のため通知先がありません",
+    };
+  }
+
+  if (kind === "approve") {
+    return createNotification({
       orgId: entry.orgId,
       userId: task.assigneeId,
       actorId: entry.actorId,
@@ -109,17 +142,18 @@ export async function notifyReviewTransition(entry: {
       message: `${actorName}さんが「${task.title}」を承認し、完了にしました`,
       emailSubject: `【past】レビュー承認: ${task.title}`,
     });
-  } else if (kind === "feedback" && task.assigneeId) {
-    await createNotification({
-      orgId: entry.orgId,
-      userId: task.assigneeId,
-      actorId: entry.actorId,
-      type: "REVIEW_FEEDBACK",
-      task,
-      message: `${actorName}さんが「${task.title}」にFBを返しました`,
-      emailSubject: `【past】FBが届きました: ${task.title}`,
-    });
   }
+
+  // feedback
+  return createNotification({
+    orgId: entry.orgId,
+    userId: task.assigneeId,
+    actorId: entry.actorId,
+    type: "REVIEW_FEEDBACK",
+    task,
+    message: `${actorName}さんが「${task.title}」にFBを返しました`,
+    emailSubject: `【past】FBが届きました: ${task.title}`,
+  });
 }
 
 /**
