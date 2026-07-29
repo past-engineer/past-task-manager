@@ -4,6 +4,7 @@ import { auth, signOut } from "@/auth";
 import Avatar from "@/components/Avatar";
 import OrgSwitcher from "@/components/OrgSwitcher";
 import PresenceIndicator from "@/components/PresenceIndicator";
+import NotificationBell from "@/components/NotificationBell";
 import { getUserOrgs, getCurrentOrg } from "@/lib/org";
 
 export default async function AppLayout({
@@ -84,6 +85,7 @@ export default async function AppLayout({
             </nav>
           </div>
           <div className="flex items-center gap-3">
+            <NotificationBell />
             <PresenceIndicator currentUserId={user.id!} />
             <span className="hidden text-[13px] text-neutral-500 sm:block">
               {user.name ?? user.email}

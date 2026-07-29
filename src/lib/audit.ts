@@ -50,6 +50,8 @@ const TASK_FIELDS = [
   "dueDate",
   "position",
   "assigneeId",
+  "reviewerId",
+  "reviewRequestedAt",
 ] as const;
 
 export function pickTaskSnapshot(t: Record<string, unknown>) {
@@ -69,6 +71,8 @@ export const TASK_FIELD_LABELS: Record<string, string> = {
   endDate: "終了日",
   dueDate: "期限",
   assigneeId: "担当",
+  reviewerId: "レビュー担当",
+  reviewRequestedAt: "レビュー依頼日時",
   position: "並び順",
   projectId: "プロジェクト",
   parentId: "親タスク",
@@ -99,6 +103,7 @@ async function undoOne(log: ActivityLog) {
           "startDate",
           "endDate",
           "dueDate",
+          "reviewRequestedAt",
         ]) as Prisma.TaskUncheckedUpdateInput,
       });
     } else if (log.action === "delete" && before) {
@@ -109,6 +114,7 @@ async function undoOne(log: ActivityLog) {
             "startDate",
             "endDate",
             "dueDate",
+            "reviewRequestedAt",
           ]) as unknown as Omit<Prisma.TaskUncheckedCreateInput, "id">),
         },
       });

@@ -9,7 +9,11 @@ import type {
   AttachmentLite,
 } from "@/lib/types";
 import type { TaskStatus } from "@prisma/client";
-import { STATUS_ORDER, STATUS_LABELS } from "@/lib/constants";
+import {
+  STATUS_ORDER,
+  STATUS_LABELS,
+  REVIEW_ERROR_MESSAGES,
+} from "@/lib/constants";
 import Avatar from "@/components/Avatar";
 import { DAY_MS, dayValue, fmtMD, weekdayOf } from "@/lib/dates";
 
@@ -55,6 +59,10 @@ export default function TaskDetailModal({
     holidays?: string[];
   } | null>(null);
   const [editingHours, setEditingHours] = useState<Record<number, string>>({});
+  // レビュー関連：通知チェックボックス＋FB入力
+  const [notifyOnReview, setNotifyOnReview] = useState(true);
+  const [fbOpen, setFbOpen] = useState(false);
+  const [fbText, setFbText] = useState("");
 
   useEffect(() => {
     fetch("/api/settings")
@@ -80,9 +88,11 @@ export default function TaskDetailModal({
     };
   }, [taskId]);
 
-  async function patch(data: Partial<TaskDetail>) {
+  async function patch(data: Partial<TaskDetail> & { notify?: boolean }) {
     if (!task) return;
-    const optimistic = { ...task, ...data };
+    const { notify: _notify, ...fields } = data;
+    void _notify;
+    const optimistic = { ...task, ...fields };
     setTask(optimistic);
     const res = await fetch(`/api/tasks/${taskId}`, {
       method: "PATCH",
@@ -91,7 +101,54 @@ export default function TaskDetailModal({
     });
     if (res.ok) {
       const updated = (await res.json()) as TaskLite;
+      setTask({ ...optimistic, ...updated });
       onChanged({ ...updated, _count: task._count });
+    } else {
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      alert(
+        (j.error && REVIEW_ERROR_MESSAGES[j.error]) ??
+          "タスクの更新に失敗しました"
+      );
+      // サーバーの状態に戻す
+      const r = await fetch(`/api/tasks/${taskId}`);
+      if (r.ok) setTask(await r.json());
+    }
+  }
+
+  // レビュー依頼（IN_PROGRESS / TODO / FEEDBACK → IN_REVIEW）
+  async function requestReview() {
+    if (!task) return;
+    if (!task.reviewerId) {
+      alert("先に「レビュー担当」を選択してください");
+      return;
+    }
+    await patch({ status: "IN_REVIEW", notify: notifyOnReview });
+  }
+
+  // 承認して完了（IN_REVIEW → DONE）
+  async function approveReview() {
+    await patch({ status: "DONE", notify: notifyOnReview });
+  }
+
+  // FBを返す（IN_REVIEW → FEEDBACK、コメント必須）
+  async function sendFeedback() {
+    if (!task || !fbText.trim()) return;
+    const text = fbText.trim();
+    setFbText("");
+    setFbOpen(false);
+    const res = await fetch(`/api/tasks/${taskId}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: `【FB】${text}` }),
+    });
+    const c = res.ok ? ((await res.json()) as CommentLite) : null;
+    await patch({ status: "FEEDBACK", notify: notifyOnReview });
+    if (c) {
+      setTask((prev) =>
+        prev && !prev.comments.some((x) => x.id === c.id)
+          ? { ...prev, comments: [...prev.comments, c] }
+          : prev
+      );
     }
   }
 
@@ -472,6 +529,96 @@ export default function TaskDetailModal({
 
               {/* side column */}
               <div className="space-y-4">
+                {/* レビューアクション */}
+                {(task.status === "TODO" ||
+                  task.status === "IN_PROGRESS" ||
+                  task.status === "FEEDBACK") && (
+                  <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/60 p-2.5">
+                    <button
+                      onClick={requestReview}
+                      className="w-full rounded-md bg-amber-500 py-1.5 text-sm font-medium text-white transition hover:bg-amber-600"
+                    >
+                      {task.status === "FEEDBACK"
+                        ? "修正完了・再レビューを依頼"
+                        : "レビューを依頼する"}
+                    </button>
+                    <label className="flex cursor-pointer items-center gap-1.5 text-xs text-neutral-600">
+                      <input
+                        type="checkbox"
+                        checked={notifyOnReview}
+                        onChange={(e) => setNotifyOnReview(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-neutral-300"
+                      />
+                      レビュー担当に通知する
+                    </label>
+                  </div>
+                )}
+                {task.status === "IN_REVIEW" && (
+                  <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/60 p-2.5">
+                    <p className="text-xs font-medium text-amber-700">
+                      レビュー待ち
+                      {task.reviewRequestedAt &&
+                        `（${new Date(
+                          task.reviewRequestedAt
+                        ).toLocaleDateString("ja-JP")} 依頼）`}
+                    </p>
+                    {!fbOpen ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          onClick={approveReview}
+                          className="rounded-md bg-emerald-500 py-1.5 text-sm font-medium text-white transition hover:bg-emerald-600"
+                        >
+                          承認して完了
+                        </button>
+                        <button
+                          onClick={() => setFbOpen(true)}
+                          className="rounded-md bg-red-500 py-1.5 text-sm font-medium text-white transition hover:bg-red-600"
+                        >
+                          FBを返す
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <textarea
+                          value={fbText}
+                          onChange={(e) => setFbText(e.target.value)}
+                          rows={3}
+                          autoFocus
+                          placeholder="FB内容を入力（必須）…"
+                          className="w-full resize-none rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-neutral-400"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={sendFeedback}
+                            disabled={!fbText.trim()}
+                            className="flex-1 rounded-md bg-red-500 py-1.5 text-sm font-medium text-white transition hover:bg-red-600 disabled:opacity-50"
+                          >
+                            FBを送る
+                          </button>
+                          <button
+                            onClick={() => {
+                              setFbOpen(false);
+                              setFbText("");
+                            }}
+                            className="rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm text-neutral-500 hover:bg-neutral-50"
+                          >
+                            取消
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <label className="flex cursor-pointer items-center gap-1.5 text-xs text-neutral-600">
+                      <input
+                        type="checkbox"
+                        checked={notifyOnReview}
+                        onChange={(e) => setNotifyOnReview(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-neutral-300"
+                      />
+                      担当者に通知する
+                    </label>
+                  </div>
+                )}
+
                 <Field label="ステータス">
                   <select
                     value={task.status}
@@ -497,6 +644,32 @@ export default function TaskDetailModal({
                     className="w-full rounded-md border border-neutral-200 px-2 py-1.5 text-sm outline-none focus:border-neutral-400"
                   >
                     <option value="">未割当</option>
+                    {members.map((m) => (
+                      <option key={m.user.id} value={m.user.id}>
+                        {m.user.name ?? m.user.email}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
+                <Field label="レビュー担当">
+                  <select
+                    value={task.reviewerId ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value || null;
+                      if (v && v === task.assigneeId) {
+                        if (
+                          !confirm(
+                            "担当者と同じメンバーです。レビュー担当にしますか？"
+                          )
+                        )
+                          return;
+                      }
+                      patch({ reviewerId: v });
+                    }}
+                    className="w-full rounded-md border border-neutral-200 px-2 py-1.5 text-sm outline-none focus:border-neutral-400"
+                  >
+                    <option value="">未設定</option>
                     {members.map((m) => (
                       <option key={m.user.id} value={m.user.id}>
                         {m.user.name ?? m.user.email}

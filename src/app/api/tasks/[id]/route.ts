@@ -5,6 +5,10 @@ import { requireUserId, userCanAccessTask } from "@/lib/data";
 import { getTaskRole, canEdit } from "@/lib/org";
 import { isTaskStatus } from "@/lib/constants";
 import {
+  notifyReviewTransition,
+  validateReviewTransition,
+} from "@/lib/notify";
+import {
   logActivity,
   pickTaskSnapshot,
   TASK_FIELD_LABELS,
@@ -24,6 +28,7 @@ export async function GET(
       where: { id },
       include: {
         assignee: true,
+        reviewer: true,
         subtasks: {
           include: { assignee: true },
           orderBy: { position: "asc" },
@@ -52,7 +57,8 @@ export async function PATCH(
   try {
     const userId = await requireUserId();
     const { id } = await params;
-    if (!canEdit(await getTaskRole(id, userId))) {
+    const role = await getTaskRole(id, userId);
+    if (!canEdit(role)) {
       return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
     }
     const body = await req.json();
@@ -65,6 +71,8 @@ export async function PATCH(
       data.status = body.status;
     if (body.assigneeId !== undefined)
       data.assigneeId = body.assigneeId || null;
+    if (body.reviewerId !== undefined)
+      data.reviewerId = body.reviewerId || null;
     if (body.estimate !== undefined)
       data.estimate =
         body.estimate === null || body.estimate === ""
@@ -86,14 +94,42 @@ export async function PATCH(
       where: { id },
       include: { project: { select: { orgId: true } } },
     });
+    if (!before) {
+      return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
+    }
+
+    // レビュー関連の遷移バリデーション
+    const nextStatus =
+      typeof data.status === "string" ? data.status : before.status;
+    if (nextStatus !== before.status) {
+      const nextReviewerId =
+        body.reviewerId !== undefined
+          ? body.reviewerId || null
+          : before.reviewerId;
+      const err = validateReviewTransition({
+        from: before.status,
+        to: nextStatus,
+        reviewerId: nextReviewerId,
+        actorId: userId,
+        isAdmin: role === "ADMIN",
+      });
+      if (err === "REVIEWER_REQUIRED") {
+        return NextResponse.json({ error: err }, { status: 400 });
+      }
+      if (err === "REVIEWER_ONLY") {
+        return NextResponse.json({ error: err }, { status: 403 });
+      }
+      // レビュー待ちに入るタイミングで依頼日時を更新
+      if (nextStatus === "IN_REVIEW") data.reviewRequestedAt = new Date();
+    }
 
     const task = await prisma.task.update({
       where: { id },
       data,
-      include: { assignee: true },
+      include: { assignee: true, reviewer: true },
     });
 
-    if (before?.project.orgId) {
+    if (before.project.orgId) {
       const changed = Object.keys(data)
         .map((k) => TASK_FIELD_LABELS[k] ?? k)
         .join("・");
@@ -107,6 +143,28 @@ export async function PATCH(
         before: pickTaskSnapshot(before as unknown as Record<string, unknown>),
         after: pickTaskSnapshot(task as unknown as Record<string, unknown>),
       });
+
+      // 通知はチェックボックスで明示された場合のみ（オプトイン）
+      if (body.notify === true && task.status !== before.status) {
+        const actor = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { name: true, email: true },
+        });
+        await notifyReviewTransition({
+          orgId: before.project.orgId,
+          actorId: userId,
+          actorName: actor?.name ?? actor?.email ?? "メンバー",
+          task: {
+            id: task.id,
+            projectId: task.projectId,
+            title: task.title,
+            assigneeId: task.assigneeId,
+            reviewerId: task.reviewerId,
+          },
+          from: before.status,
+          to: task.status,
+        });
+      }
     }
     return NextResponse.json(task);
   } catch {

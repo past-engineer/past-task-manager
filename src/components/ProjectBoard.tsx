@@ -9,6 +9,8 @@ import type {
   BusyDayInfo,
 } from "@/lib/types";
 import type { TaskStatus } from "@prisma/client";
+import { REVIEW_ERROR_MESSAGES } from "@/lib/constants";
+import type { ReviewDropInfo } from "@/components/KanbanBoard";
 import KanbanBoard from "@/components/KanbanBoard";
 import ListView from "@/components/ListView";
 import GanttView from "@/components/GanttView";
@@ -34,6 +36,7 @@ export default function ProjectBoard({
   projectThumbnailUrl = null,
   members: initialMembers,
   currentUserId,
+  initialOpenTaskId = null,
 }: {
   projectId: string;
   projectName: string;
@@ -48,6 +51,7 @@ export default function ProjectBoard({
   initialTasks: TaskLite[];
   members: MemberLite[];
   currentUserId: string;
+  initialOpenTaskId?: string | null;
 }) {
   const [tasks, setTasks] = useState<TaskLite[]>(initialTasks);
   const [members, setMembers] = useState<MemberLite[]>(initialMembers);
@@ -66,7 +70,9 @@ export default function ProjectBoard({
     },
     [projectId]
   );
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(
+    initialOpenTaskId
+  );
   const [newTaskStatus, setNewTaskStatus] = useState<TaskStatus | null>(null);
   const [milestones, setMilestones] =
     useState<MilestoneLite[]>(initialMilestones);
@@ -126,14 +132,29 @@ export default function ProjectBoard({
 
   const rawPatchTask = useCallback(
     async (id: string, data: Partial<TaskLite>) => {
-      setTasks((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, ...data } : t))
+      // 失敗時に戻すためのスナップショット
+      const prev = tasksRef.current.find((t) => t.id === id);
+      setTasks((cur) =>
+        cur.map((t) => (t.id === id ? { ...t, ...data } : t))
       );
-      await fetch(`/api/tasks/${id}`, {
+      const res = await fetch(`/api/tasks/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        if (prev) {
+          const restore = pickPrev(prev, data);
+          setTasks((cur) =>
+            cur.map((t) => (t.id === id ? { ...t, ...restore } : t))
+          );
+        }
+        alert(
+          (j.error && REVIEW_ERROR_MESSAGES[j.error]) ??
+            "タスクの更新に失敗しました"
+        );
+      }
     },
     []
   );
@@ -156,13 +177,14 @@ export default function ProjectBoard({
   const rawReorder = useCallback(
     async (
       apply: (prev: TaskLite[]) => TaskLite[],
-      updates: { id: string; status: TaskStatus; position: number }[]
+      updates: { id: string; status: TaskStatus; position: number }[],
+      review?: ReviewDropInfo
     ) => {
       setTasks(apply);
-      await fetch("/api/tasks/reorder", {
+      return fetch("/api/tasks/reorder", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, updates }),
+        body: JSON.stringify({ projectId, updates, review }),
       });
     },
     [projectId]
@@ -171,7 +193,8 @@ export default function ProjectBoard({
   const reorder = useCallback(
     async (
       next: TaskLite[],
-      updates: { id: string; status: TaskStatus; position: number }[]
+      updates: { id: string; status: TaskStatus; position: number }[],
+      review?: ReviewDropInfo
     ) => {
       // 逆操作：対象タスクの元の status/position を復元
       const inverse = updates
@@ -184,8 +207,8 @@ export default function ProjectBoard({
         .filter((x): x is { id: string; status: TaskStatus; position: number } => !!x);
       if (inverse.length > 0) {
         pushUndo(
-          () =>
-            rawReorder(
+          async () => {
+            await rawReorder(
               (prev) =>
                 prev.map((t) => {
                   const inv = inverse.find((i) => i.id === t.id);
@@ -194,9 +217,10 @@ export default function ProjectBoard({
                     : t;
                 }),
               inverse
-            ),
-          () =>
-            rawReorder(
+            );
+          },
+          async () => {
+            await rawReorder(
               (prev) =>
                 prev.map((t) => {
                   const u = updates.find((i) => i.id === t.id);
@@ -205,12 +229,45 @@ export default function ProjectBoard({
                     : t;
                 }),
               updates
-            )
+            );
+          }
         );
       }
-      await rawReorder(() => next, updates);
+      // レビュー担当の指定があればローカル状態にも反映
+      const applyNext = (prev: TaskLite[]) => {
+        void prev;
+        if (!review || review.reviewerId === undefined) return next;
+        return next.map((t) =>
+          t.id === review.taskId
+            ? {
+                ...t,
+                reviewerId: review.reviewerId ?? null,
+                reviewer:
+                  members.find((m) => m.user.id === review.reviewerId)?.user ??
+                  null,
+              }
+            : t
+        );
+      };
+      const res = await rawReorder(applyNext, updates, review);
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        // 失敗したら元の位置へ戻す
+        setTasks((prev) =>
+          prev.map((t) => {
+            const inv = inverse.find((i) => i.id === t.id);
+            return inv
+              ? { ...t, status: inv.status, position: inv.position }
+              : t;
+          })
+        );
+        alert(
+          (j.error && REVIEW_ERROR_MESSAGES[j.error]) ??
+            "タスクの更新に失敗しました"
+        );
+      }
     },
-    [pushUndo, rawReorder]
+    [pushUndo, rawReorder, members]
   );
 
   const deleteTask = useCallback(

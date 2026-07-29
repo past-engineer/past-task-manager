@@ -22,6 +22,10 @@ export default function TaskCard({
     task.assignee ??
     members.find((m) => m.user.id === task.assigneeId)?.user ??
     null;
+  const reviewer =
+    task.reviewer ??
+    members.find((m) => m.user.id === task.reviewerId)?.user ??
+    null;
   const due = formatDate(task.dueDate);
   const overdue =
     task.dueDate && task.status !== "DONE"
@@ -61,7 +65,18 @@ export default function TaskCard({
             <span title="添付">📎 {task._count.attachments}</span>
           )}
         </div>
-        {assignee && <Avatar user={assignee} size={22} />}
+        <div className="flex items-center gap-1">
+          {reviewer && (
+            <span
+              className="flex items-center gap-0.5"
+              title={`レビュー担当: ${reviewer.name ?? reviewer.email}`}
+            >
+              <span className="text-[10px] text-neutral-400">👀</span>
+              <Avatar user={reviewer} size={18} />
+            </span>
+          )}
+          {assignee && <Avatar user={assignee} size={22} />}
+        </div>
       </div>
     </div>
   );

@@ -21,10 +21,29 @@ import { useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import type { TaskLite, MemberLite } from "@/lib/types";
 import type { TaskStatus } from "@prisma/client";
-import { STATUS_ORDER, STATUS_LABELS, STATUS_COLORS } from "@/lib/constants";
+import {
+  STATUS_ORDER,
+  STATUS_LABELS,
+  STATUS_COLORS,
+  isReviewTransition,
+} from "@/lib/constants";
 import TaskCard from "@/components/TaskCard";
 
 type Columns = Record<TaskStatus, TaskLite[]>;
+
+/** D&D でレビュー関連の遷移を確定した際の付帯情報 */
+export type ReviewDropInfo = {
+  taskId: string;
+  reviewerId?: string | null;
+  notify: boolean;
+};
+
+type PendingDrop = {
+  next: TaskLite[];
+  updates: { id: string; status: TaskStatus; position: number }[];
+  task: TaskLite;
+  kind: "request" | "approve" | "feedback";
+};
 
 function groupByStatus(tasks: TaskLite[]): Columns {
   const cols = {} as Columns;
@@ -46,13 +65,15 @@ export default function KanbanBoard({
   members: MemberLite[];
   onReorder: (
     next: TaskLite[],
-    updates: { id: string; status: TaskStatus; position: number }[]
+    updates: { id: string; status: TaskStatus; position: number }[],
+    review?: ReviewDropInfo
   ) => void;
   onOpen: (id: string) => void;
   onAddInColumn: (status: TaskStatus) => void;
 }) {
   const [columns, setColumns] = useState<Columns>(() => groupByStatus(tasks));
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null);
 
   useEffect(() => {
     setColumns(groupByStatus(tasks));
@@ -148,7 +169,35 @@ export default function KanbanBoard({
         }
       });
     }
-    if (updates.length > 0) onReorder(next, updates);
+    if (updates.length === 0) return;
+
+    // ドラッグしたタスク自身がレビュー関連の遷移なら、確認ポップアップを挟む
+    const orig = taskById.get(active.id as string);
+    const movedTo = updates.find((u) => u.id === active.id)?.status;
+    const kind =
+      orig && movedTo ? isReviewTransition(orig.status, movedTo) : null;
+    if (orig && kind) {
+      setPendingDrop({ next, updates, task: orig, kind });
+      return;
+    }
+    onReorder(next, updates);
+  }
+
+  function confirmPendingDrop(reviewerId: string | null, notify: boolean) {
+    if (!pendingDrop) return;
+    onReorder(pendingDrop.next, pendingDrop.updates, {
+      taskId: pendingDrop.task.id,
+      reviewerId:
+        pendingDrop.kind === "request" ? reviewerId : undefined,
+      notify,
+    });
+    setPendingDrop(null);
+  }
+
+  function cancelPendingDrop() {
+    // ドロップ前の状態（props のタスク）へ戻す
+    setColumns(groupByStatus(tasks));
+    setPendingDrop(null);
   }
 
   return (
@@ -179,7 +228,124 @@ export default function KanbanBoard({
           </div>
         ) : null}
       </DragOverlay>
+
+      {pendingDrop && (
+        <ReviewDropDialog
+          pending={pendingDrop}
+          members={members}
+          onConfirm={confirmPendingDrop}
+          onCancel={cancelPendingDrop}
+        />
+      )}
     </DndContext>
+  );
+}
+
+const DROP_DIALOG_COPY: Record<
+  PendingDrop["kind"],
+  { title: string; desc: string; notifyLabel: string; confirm: string }
+> = {
+  request: {
+    title: "レビューを依頼",
+    desc: "をレビュー待ちに移動します",
+    notifyLabel: "レビュー担当に通知する",
+    confirm: "依頼する",
+  },
+  approve: {
+    title: "承認して完了",
+    desc: "を完了にします",
+    notifyLabel: "担当者に通知する",
+    confirm: "承認する",
+  },
+  feedback: {
+    title: "FBに差し戻し",
+    desc: "をFB対応に移動します（FB内容はタスクを開いてコメントで残せます）",
+    notifyLabel: "担当者に通知する",
+    confirm: "差し戻す",
+  },
+};
+
+function ReviewDropDialog({
+  pending,
+  members,
+  onConfirm,
+  onCancel,
+}: {
+  pending: PendingDrop;
+  members: MemberLite[];
+  onConfirm: (reviewerId: string | null, notify: boolean) => void;
+  onCancel: () => void;
+}) {
+  const [reviewerId, setReviewerId] = useState<string>(
+    pending.task.reviewerId ?? ""
+  );
+  const [notify, setNotify] = useState(true);
+  const copy = DROP_DIALOG_COPY[pending.kind];
+  const needsReviewer = pending.kind === "request";
+
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-sm rounded-xl bg-white p-4 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-sm font-semibold text-neutral-900">
+          {copy.title}
+        </h3>
+        <p className="mt-1 text-sm text-neutral-500">
+          「{pending.task.title}」{copy.desc}
+        </p>
+
+        {needsReviewer && (
+          <div className="mt-3">
+            <label className="mb-1 block text-xs font-medium text-neutral-400">
+              レビュー担当
+            </label>
+            <select
+              value={reviewerId}
+              onChange={(e) => setReviewerId(e.target.value)}
+              className="w-full rounded-md border border-neutral-200 px-2 py-1.5 text-sm outline-none focus:border-neutral-400"
+            >
+              <option value="">選択してください</option>
+              {members.map((m) => (
+                <option key={m.user.id} value={m.user.id}>
+                  {m.user.name ?? m.user.email}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <label className="mt-3 flex cursor-pointer items-center gap-1.5 text-sm text-neutral-600">
+          <input
+            type="checkbox"
+            checked={notify}
+            onChange={(e) => setNotify(e.target.checked)}
+            className="h-4 w-4 rounded border-neutral-300"
+          />
+          {copy.notifyLabel}
+        </label>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded-md border border-neutral-200 px-3 py-1.5 text-sm text-neutral-500 transition hover:bg-neutral-50"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={() => onConfirm(reviewerId || null, notify)}
+            disabled={needsReviewer && !reviewerId}
+            className="rounded-md bg-neutral-900 px-4 py-1.5 text-sm font-medium text-white transition hover:bg-neutral-700 disabled:opacity-50"
+          >
+            {copy.confirm}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

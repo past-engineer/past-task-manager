@@ -19,13 +19,16 @@ export const dynamic = "force-dynamic";
 
 export default async function ProjectPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ task?: string }>;
 }) {
   const user = await getCurrentUser();
   if (!user?.id) redirect("/login");
   const userId = user.id;
   const { id } = await params;
+  const { task: openTaskId } = await searchParams;
 
   if (!(await userCanAccessProject(id, userId))) notFound();
   const role = await getProjectRole(id, userId);
@@ -38,6 +41,7 @@ export default async function ProjectPage({
         where: { parentId: null },
         include: {
           assignee: true,
+          reviewer: true,
           _count: {
             select: { subtasks: true, comments: true, attachments: true },
           },
@@ -184,6 +188,7 @@ export default async function ProjectPage({
         projectThumbnailUrl={project.thumbnailUrl}
         members={members}
         currentUserId={userId}
+        initialOpenTaskId={openTaskId ?? null}
       />
     </div>
   );

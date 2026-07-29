@@ -22,8 +22,11 @@ export type TaskLite = {
   dueDate: string | null;
   position: number;
   assigneeId: string | null;
+  reviewerId: string | null;
+  reviewRequestedAt: string | null;
   parentId: string | null;
   assignee: UserLite | null;
+  reviewer?: UserLite | null;
   createdAt: string;
   updatedAt: string;
   _count?: { subtasks: number; comments: number; attachments: number };
@@ -135,6 +138,17 @@ export type TaskDailyHoursLite = {
   taskId: string;
   date: string;
   hours: number;
+};
+
+export type NotificationLite = {
+  id: string;
+  type: "REVIEW_REQUESTED" | "REVIEW_APPROVED" | "REVIEW_FEEDBACK";
+  taskId: string | null;
+  projectId: string | null;
+  message: string;
+  readAt: string | null;
+  createdAt: string;
+  actor: UserLite | null;
 };
 
 export type TaskDetail = TaskLite & {

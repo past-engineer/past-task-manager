@@ -42,13 +42,18 @@ export async function POST(req: Request) {
             ? null
             : Number(body.estimate),
         assigneeId: body.assigneeId?.toString() || null,
+        reviewerId: body.reviewerId?.toString() || null,
         parentId: body.parentId?.toString() || null,
         dueDate: body.dueDate ? new Date(body.dueDate) : null,
         startDate: body.startDate ? new Date(body.startDate) : null,
         endDate: body.endDate ? new Date(body.endDate) : null,
         position: (last?.position ?? 0) + 1,
       },
-      include: { assignee: true, project: { select: { orgId: true } } },
+      include: {
+        assignee: true,
+        reviewer: true,
+        project: { select: { orgId: true } },
+      },
     });
     if (task.project.orgId) {
       await logActivity({
